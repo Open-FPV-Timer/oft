@@ -197,3 +197,46 @@ mod tests {
         assert!(n <= MAX_FRAME);
     }
 }
+
+#[cfg(test)]
+mod vectors {
+    //! Reference frames for other implementations (the C Node firmware). Run with
+    //! `cargo test -p oft-nodelink print_vectors -- --ignored --nocapture`.
+    use super::*;
+    use crate::msg::*;
+    use crate::LINK_VERSION;
+    extern crate std;
+    use std::{eprintln, format, string::String};
+
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    #[test]
+    #[ignore]
+    fn print_vectors() {
+        let mut plan = Plan::with(0, 0, GAIN_AUTO);
+        plan.push(0, 5800).unwrap();
+        let mut samples = Samples::new(0, 1_000_000, 1000, -920, SampleFlags::empty());
+        for v in [-915, -910, -600] {
+            samples.push(v).unwrap();
+        }
+        let msgs = [
+            ("hello", Message::Hello(Hello { chip_id: 0x0000_1122_3344_5566, fw: [0, 1, 0], link_version: LINK_VERSION, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 8, features: Features::SYNC | Features::DFU })),
+            ("plan", Message::Plan(plan)),
+            ("samples", Message::Samples(samples)),
+            ("sync_edge", Message::SyncEdge(SyncEdge { edge_seq: 7, t_node: 123_456_789 })),
+            ("ping", Message::Ping(Ping { id: 9, t_timer: 42 })),
+            ("pong", Message::Pong(Pong { id: 9, t_timer: 42, t_node: 4242 })),
+            ("status", Message::Status(Status { temp_dc: 413, hop_errors: 1, overruns: 2, gain_index: 60 })),
+            ("reset", Message::Reset),
+            ("identify", Message::Identify { duration_ms: 3000 }),
+            ("dfu", Message::Dfu),
+        ];
+        for (name, m) in msgs {
+            let mut buf = [0u8; MAX_FRAME];
+            let n = encode_frame(&m, &mut buf).unwrap();
+            eprintln!("VECTOR {name} {}", hex(&buf[..n]));
+        }
+    }
+}
