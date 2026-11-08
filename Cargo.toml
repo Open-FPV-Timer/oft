@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/oft-nodelink", "crates/oft-core", "crates/oft-sim"]
+members = ["crates/oft-nodelink", "crates/oft-core", "crates/oft-sim", "crates/oftd"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,3 +12,4 @@ rust-version = "1.80"
 [workspace.dependencies]
 oft-nodelink = { path = "crates/oft-nodelink" }
 oft-core = { path = "crates/oft-core" }
+oft-sim = { path = "crates/oft-sim" }

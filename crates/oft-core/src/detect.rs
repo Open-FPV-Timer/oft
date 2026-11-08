@@ -66,6 +66,9 @@ pub struct Detector {
     /// to zero). Starts from the first sample.
     floor_fp: Option<i32>,
     last_mid: Option<u64>,
+    /// Set when min-lap suppressed a rising edge; the rest of that pulse is ignored
+    /// until the trace falls below the exit level.
+    suppressed: bool,
     /// Previous sample time, to learn the sample period.
     prev_t: Option<u64>,
     dt_us: u64,
@@ -95,6 +98,7 @@ impl Detector {
             smoothed: None,
             floor_fp: None,
             last_mid: None,
+            suppressed: false,
             prev_t: None,
             dt_us: 1000,
             pre: [0; PRE_CAP],
@@ -187,9 +191,17 @@ impl Detector {
                     self.floor_fp = Some(floor_fp + step);
                 }
 
+                if self.suppressed {
+                    if s < exit {
+                        self.suppressed = false;
+                    }
+                    self.push_pre(s);
+                    return None;
+                }
                 if s >= enter {
                     if let Some(last) = self.last_mid {
                         if t.saturating_sub(last) < self.cfg.min_lap_us {
+                            self.suppressed = true;
                             self.push_pre(s);
                             return None;
                         }
@@ -306,6 +318,7 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec::Vec;
 
     #[test]
     fn levels_follow_threshold_mode() {
@@ -314,6 +327,33 @@ mod tests {
         assert_eq!(d.levels(), (-750, -800));
         d.set_config(Config { threshold: Threshold::Manual { enter: -700, exit: -760 }, ..Config::default() });
         assert_eq!(d.levels(), (-700, -760));
+    }
+
+    #[test]
+    fn min_lap_ignores_the_whole_pulse_not_just_its_start() {
+        // Two identical 300 ms pulses, 1.9 s apart, min lap 2 s. The second pulse straddles
+        // the min-lap boundary; none of it may become a crossing.
+        let cfg = Config { threshold: Threshold::Manual { enter: -750, exit: -800 }, smooth_shift: 0, ..Config::default() };
+        let mut d = Detector::new(0, cfg);
+        let mut found = Vec::new();
+        let pulse = |t: u64, c: u64| -> i16 { if t.abs_diff(c) < 150_000 { -600 } else { -920 } };
+        let mut t = 0;
+        while t < 4_000_000 {
+            if let Some(c) = d.push(t, pulse(t, 1_000_000).max(pulse(t, 2_900_000)), SampleFlags::empty()) {
+                found.push(c);
+            }
+            t += 1000;
+        }
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].t_mid.abs_diff(1_000_000) < 2_000);
+        // A third pulse well after min lap is detected again.
+        while t < 7_000_000 {
+            if let Some(c) = d.push(t, pulse(t, 6_000_000), SampleFlags::empty()) {
+                found.push(c);
+            }
+            t += 1000;
+        }
+        assert_eq!(found.len(), 2);
     }
 
     #[test]

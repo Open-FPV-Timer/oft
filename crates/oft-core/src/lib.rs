@@ -8,6 +8,9 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+extern crate std;
+
 pub mod clock;
 pub mod detect;
 pub mod host;
