@@ -218,7 +218,10 @@ impl NodeHost {
                 self.dropped_samples = self.dropped_samples.wrapping_add(((s.t0 - last) / s.dt_us.max(1) as u64) as u32);
             }
         }
-        det.floor_hint(s.noise_floor);
+        // A Node with no floor estimate for this batch sends an impossible value; ignore it.
+        if s.noise_floor > -3000 {
+            det.floor_hint(s.noise_floor);
+        }
         for (k, &p) in s.power().iter().enumerate() {
             let t = s.time_of(k);
             if let Some(c) = det.push(t, p, s.flags) {
@@ -279,6 +282,22 @@ mod tests {
         }
         assert!(host.clock().is_synced());
         assert_eq!(host.clock().to_timer(2_800_000 + 2_000_000), 2_800_000);
+    }
+
+    #[test]
+    fn an_impossible_noise_floor_hint_is_ignored() {
+        use oft_nodelink::msg::{Plan, SampleFlags, Samples, GAIN_AUTO};
+        let mut host = NodeHost::new(Config::default());
+        let mut plan = Plan::with(0, 0, GAIN_AUTO);
+        plan.push(0, 5800).unwrap();
+        host.set_plan(plan);
+        let mut s = Samples::new(0, 0, 1000, i16::MIN, SampleFlags::empty());
+        for _ in 0..10 {
+            s.push(-915).unwrap();
+        }
+        host.feed(&Message::Samples(s), 0, |_| {});
+        let floor = host.detector(0).unwrap().floor().unwrap();
+        assert!(floor > -1000, "floor {floor} was poisoned by the sentinel");
     }
 
     #[test]
