@@ -7,6 +7,7 @@
 pub mod api;
 pub mod link;
 pub mod protocol;
+pub mod serial;
 pub mod timer;
 
 pub use timer::{Timer, TimerConfig};

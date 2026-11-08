@@ -22,9 +22,12 @@ struct Args {
     /// Fake Node: pass height above the floor, dB.
     #[arg(long, default_value_t = 36.0)]
     fake_height_db: f64,
-    /// Serial port of a real Node (not implemented yet).
+    /// Serial port of a real Node, e.g. /dev/ttyACM0 (XIAO C5 over USB-C) or a USB-UART adapter.
     #[arg(long)]
     serial: Option<String>,
+    /// Baud rate for --serial.
+    #[arg(long, default_value_t = 921_600)]
+    baud: u32,
     /// Timer id advertised to clients.
     #[arg(long)]
     id: Option<String>,
@@ -45,8 +48,13 @@ async fn main() {
         // Fake Node booted 1.5 s before us and runs 30 ppm fast.
         Box::new(FakeLink(FakeNode::new(scene, NodeClock { offset_us: -1_500_000, ppm: 30.0 }, 42)))
     } else if let Some(port) = args.serial {
-        eprintln!("oftd: serial Nodes are not implemented yet ({port}). Use --fake.");
-        std::process::exit(2);
+        match oftd::serial::SerialLink::open(&port, args.baud) {
+            Ok(l) => Box::new(l),
+            Err(e) => {
+                eprintln!("oftd: cannot open {port}: {e}");
+                std::process::exit(2);
+            }
+        }
     } else {
         eprintln!("oftd: choose --fake or --serial <port>");
         std::process::exit(2);
