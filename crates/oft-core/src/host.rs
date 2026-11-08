@@ -189,7 +189,7 @@ impl NodeHost {
             }
             match latest {
                 Some(l) if t <= l => {
-                    if previous.is_none_or(|p| t > p) {
+                    if previous.map_or(true, |p| t > p) {
                         previous = Some(t);
                     }
                 }

@@ -164,7 +164,11 @@ impl Timer {
         let h = inner.history.get(seat as usize)?.as_ref()?;
         let pts: Vec<(u64, i16)> = h.samples.iter().copied().filter(|(t, _)| *t >= from && *t <= to).collect();
         let (t0, _) = *pts.first()?;
-        let dt_us = if h.rate_hz > 0 { 1_000_000 / h.rate_hz } else if pts.len() > 1 { ((pts.last()?.0 - t0) / (pts.len() as u64 - 1)) as u32 } else { 1000 };
+        let dt_us = match 1_000_000u32.checked_div(h.rate_hz) {
+            Some(d) => d,
+            None if pts.len() > 1 => ((pts.last()?.0 - t0) / (pts.len() as u64 - 1)) as u32,
+            None => 1000,
+        };
         let floor = inner.host.detector(seat).and_then(|d| d.floor()).unwrap_or(0);
         Some(SamplesJson { kind: "samples", seat, t0, dt_us, p: pts.iter().map(|(_, p)| *p).collect(), nf: floor })
     }
