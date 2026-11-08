@@ -55,6 +55,15 @@ pub struct Pass {
     pub dip: f64,
 }
 
+/// A pass that repeats forever: the template's `center_us` is replaced by
+/// `first_us + k * period_us`. O(1) to evaluate, so a fake Node can run for days.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Repeat {
+    pub first_us: u64,
+    pub period_us: u64,
+    pub pass: Pass,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
     /// Noise floor, dB.
@@ -65,13 +74,24 @@ pub struct Scene {
     pub clip_db: f64,
     /// Sample period, µs.
     pub dt_us: u64,
+    /// Explicit passes. Evaluating a sample costs O(len), so keep this to hundreds.
     pub passes: Vec<Pass>,
+    /// An endlessly repeating pass, for long-running fakes.
+    pub repeat: Option<Repeat>,
 }
 
 impl Default for Scene {
     fn default() -> Self {
-        Self { floor_db: -92.0, noise_db: 0.8, clip_db: -20.0, dt_us: 1000, passes: Vec::new() }
+        Self { floor_db: -92.0, noise_db: 0.8, clip_db: -20.0, dt_us: 1000, passes: Vec::new(), repeat: None }
     }
+}
+
+fn pass_db(pass: &Pass, center_us: u64, t: u64) -> f64 {
+    let x = t as f64 - center_us as f64;
+    let main = (-(x * x) / (2.0 * pass.width_us * pass.width_us)).exp();
+    let w4 = pass.width_us / 4.0;
+    let null = 1.0 - pass.dip * (-(x * x) / (2.0 * w4 * w4)).exp();
+    pass.height_db * main * null
 }
 
 impl Scene {
@@ -79,13 +99,32 @@ impl Scene {
     pub fn clean_db(&self, t: u64) -> f64 {
         let mut p = self.floor_db;
         for pass in &self.passes {
-            let x = t as f64 - pass.center_us as f64;
-            let main = (-(x * x) / (2.0 * pass.width_us * pass.width_us)).exp();
-            let w4 = pass.width_us / 4.0;
-            let null = 1.0 - pass.dip * (-(x * x) / (2.0 * w4 * w4)).exp();
-            p += pass.height_db * main * null;
+            p += pass_db(pass, pass.center_us, t);
+        }
+        if let Some(r) = &self.repeat {
+            if r.period_us > 0 && t + r.period_us >= r.first_us {
+                // The nearest repetition and its neighbours cover any overlap.
+                let k = (t.saturating_sub(r.first_us) + r.period_us / 2) / r.period_us;
+                for kk in k.saturating_sub(1)..=k + 1 {
+                    p += pass_db(&r.pass, r.first_us + kk * r.period_us, t);
+                }
+            }
         }
         p
+    }
+
+    /// Centres of the repeating pass within `[from, to]`, in order. Handy for tests.
+    pub fn repeat_centers(&self, from: u64, to: u64) -> Vec<u64> {
+        let Some(r) = &self.repeat else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut c = r.first_us;
+        while c <= to {
+            if c >= from {
+                out.push(c);
+            }
+            c += r.period_us;
+        }
+        out
     }
 
     /// One sample: (power in 0.1 dB, flags).

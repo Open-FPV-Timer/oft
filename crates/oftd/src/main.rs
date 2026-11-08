@@ -1,6 +1,6 @@
 use clap::Parser;
 use oft_sim::fake_node::FakeNode;
-use oft_sim::{NodeClock, Pass, Scene};
+use oft_sim::{NodeClock, Pass, Repeat, Scene};
 use oftd::link::FakeLink;
 use oftd::protocol::Config;
 use oftd::{serve, Timer, TimerConfig};
@@ -36,8 +36,11 @@ async fn main() {
     let link: Box<dyn oftd::link::NodeLink> = if args.fake {
         let mut scene = Scene::default();
         if args.fake_lap_s > 0.0 {
-            let gap = (args.fake_lap_s * 1e6) as u64;
-            scene.passes = (0..100_000u64).map(|k| Pass { center_us: 2_000_000 + k * gap, height_db: args.fake_height_db, width_us: 130_000.0, dip: 0.4 }).collect();
+            scene.repeat = Some(Repeat {
+                first_us: 2_000_000,
+                period_us: (args.fake_lap_s * 1e6) as u64,
+                pass: Pass { center_us: 0, height_db: args.fake_height_db, width_us: 130_000.0, dip: 0.4 },
+            });
         }
         // Fake Node booted 1.5 s before us and runs 30 ppm fast.
         Box::new(FakeLink(FakeNode::new(scene, NodeClock { offset_us: -1_500_000, ppm: 30.0 }, 42)))
