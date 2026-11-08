@@ -1,0 +1,10 @@
+[package]
+name = "oft-nodelink"
+description = "OFT Node link: COBS + CRC-16 framed binary messages between a Node and its Timer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

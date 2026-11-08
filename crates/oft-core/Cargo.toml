@@ -1,0 +1,11 @@
+[package]
+name = "oft-core"
+description = "OFT core: clock mapping, crossing detection and buffers shared by every Timer host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+oft-nodelink.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "oft-sim"
+description = "Synthetic passes and a fake Node for testing OFT without hardware"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+oft-nodelink.workspace = true
+oft-core.workspace = true
