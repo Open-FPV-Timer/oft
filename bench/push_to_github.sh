@@ -22,6 +22,8 @@ for r in oft oft-spec oft-timer-rp2350 oft-node-c5 oft-hardware rh-oft; do
         gh repo create "$ORG/$r" --private --description "${DESC[$r]}"
     git -C "$ROOT/$r" remote get-url origin >/dev/null 2>&1 ||
         git -C "$ROOT/$r" remote add origin "https://github.com/$ORG/$r.git"
-    git -C "$ROOT/$r" push -u origin --all
+    # Use the gh login for this push, whatever credential helpers git is set up with.
+    GIT_TERMINAL_PROMPT=0 git -C "$ROOT/$r" -c credential.helper= \
+        -c credential.helper='!gh auth git-credential' push -u origin --all
 done
 gh repo list "$ORG" --json name,visibility --jq '.[] | "\(.name)  \(.visibility)"'
