@@ -2,8 +2,8 @@
 //! driver loop that moves bytes between the link and the host.
 
 use crate::link::NodeLink;
-use crate::protocol::{self, Config, CrossingJson, SamplesJson, SeatStatus, StatusJson, ThresholdConfig};
-use oft_core::{Crossing, DetectConfig, Event, NodeHost, Threshold};
+use crate::protocol::{self, Config, CrossingJson, SamplesJson, SeatStatus, StatusJson};
+use oft_core::{Crossing, DetectConfig, Event, NodeHost, MAX_SEATS};
 use oft_nodelink::msg::{Message, Plan, Samples, GAIN_AUTO};
 use oft_nodelink::{encode_frame, FrameDecoder, MAX_FRAME};
 use std::collections::VecDeque;
@@ -16,6 +16,8 @@ use tokio::sync::broadcast;
 pub const CROSSING_REPLAY: usize = 256;
 /// Seconds of full-rate sample history kept per seat.
 pub const HISTORY_S: u64 = 600;
+/// Conformance level (spec §6.2).
+pub const LEVEL: &str = "L3";
 
 #[derive(Debug, Clone)]
 pub struct TimerConfig {
@@ -78,12 +80,19 @@ pub struct Timer {
 
 fn detect_config(c: &Config) -> DetectConfig {
     DetectConfig {
-        threshold: match c.threshold {
-            ThresholdConfig::Auto { snr_enter, hysteresis } => Threshold::Auto { snr_enter, hysteresis },
-            ThresholdConfig::Manual { enter, exit } => Threshold::Manual { enter, exit },
-        },
+        threshold: (&c.threshold).into(),
         min_lap_us: c.min_lap_ms as u64 * 1000,
         ..DetectConfig::default()
+    }
+}
+
+/// Push the Timer-wide detection settings and every seat's own threshold into the host.
+/// Call before `set_plan`, which builds the detectors from them.
+fn apply_detection(host: &mut NodeHost, c: &Config) {
+    host.set_detect_config(detect_config(c));
+    for seat in 0..MAX_SEATS as u8 {
+        let own = c.seats.iter().find(|s| s.seat == seat).and_then(|s| s.threshold.as_ref());
+        host.set_seat_threshold(seat, own.map(Into::into));
     }
 }
 
@@ -100,6 +109,7 @@ impl Timer {
         let (events, _) = broadcast::channel(1024);
         let boot_id = format!("{:08x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0));
         let mut host = NodeHost::new(detect_config(&config));
+        apply_detection(&mut host, &config);
         host.set_plan(plan_for(&config));
         Arc::new(Self {
             cfg,
@@ -143,7 +153,7 @@ impl Timer {
         let plan = plan_for(&config);
         {
             let mut inner = self.inner.lock().unwrap();
-            inner.host.set_detect_config(detect_config(&config));
+            apply_detection(&mut inner.host, &config);
             inner.host.set_plan(plan);
             inner.config = config;
             for h in inner.history.iter_mut() {
@@ -223,7 +233,7 @@ impl Timer {
             "proto": protocol::PROTO,
             "host": "oftd",
             "fw": env!("CARGO_PKG_VERSION"),
-            "level": "L3",
+            "level": LEVEL,
             "calibrated": false,
             "nodes": hello.map(|h| vec![serde_json::json!({
                 "id": format!("{:012x}", h.chip_id),
@@ -241,10 +251,23 @@ impl Timer {
                 "crossings": { "algorithms": ["edge_mid"], "replay": CROSSING_REPLAY, "fields": ["t_enter", "t_exit", "peak", "snr"] },
                 "samples.stream": { "rate_hz": 1000, "decimate": [1, 2, 5, 10, 20, 50] },
                 "samples.history": { "full_rate_s": HISTORY_S, "reduced_rate_s": 0, "reduced_hz": 0 },
-                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seats_per_node": true },
+                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seats_per_node": true, "seat_thresholds": true },
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
             },
         })
+    }
+
+    /// TXT record for mDNS discovery (spec §6.1), in a fixed key order.
+    pub fn discovery_txt(&self) -> Vec<(&'static str, String)> {
+        let inner = self.inner.lock().unwrap();
+        vec![
+            ("id", self.cfg.id.clone()),
+            ("fw", env!("CARGO_PKG_VERSION").to_string()),
+            ("proto", protocol::PROTO.to_string()),
+            ("seats", inner.config.seats.iter().filter(|s| s.enabled).count().to_string()),
+            ("nodes", (inner.host.hello().is_some() as u8).to_string()),
+            ("level", LEVEL.to_string()),
+        ]
     }
 
     pub fn hello_json(&self) -> serde_json::Value {

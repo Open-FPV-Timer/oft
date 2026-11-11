@@ -11,6 +11,9 @@ pub struct SeatConfig {
     pub seat: u8,
     pub freq_mhz: u16,
     pub enabled: bool,
+    /// This seat's own threshold. Absent or null: use `Config::threshold`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<ThresholdConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -22,10 +25,20 @@ pub enum ThresholdConfig {
     Manual { enter: i16, exit: i16 },
 }
 
+impl From<&ThresholdConfig> for oft_core::Threshold {
+    fn from(t: &ThresholdConfig) -> Self {
+        match *t {
+            ThresholdConfig::Auto { snr_enter, hysteresis } => Self::Auto { snr_enter, hysteresis },
+            ThresholdConfig::Manual { enter, exit } => Self::Manual { enter, exit },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub seats: Vec<SeatConfig>,
     pub seats_per_node: u8,
+    /// Timer-wide default; a seat's own `threshold` overrides it for that seat.
     pub threshold: ThresholdConfig,
     pub min_lap_ms: u32,
 }
@@ -33,7 +46,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            seats: vec![SeatConfig { seat: 0, freq_mhz: 5800, enabled: true }],
+            seats: vec![SeatConfig { seat: 0, freq_mhz: 5800, enabled: true, threshold: None }],
             seats_per_node: 8,
             threshold: ThresholdConfig::Auto { snr_enter: 150, hysteresis: 50 },
             min_lap_ms: 2000,

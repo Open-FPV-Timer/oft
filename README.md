@@ -15,6 +15,16 @@ cargo test -p oft-sim --test detect print_margins -- --ignored --nocapture   # d
 cargo check -p oft-core -p oft-nodelink --target thumbv8m.main-none-eabihf   # RP2350 build check
 ```
 
+```sh
+cargo build -p oftd
+target/debug/oftd --fake                     # simulated Node, serves on 0.0.0.0:7270
+target/debug/oftd --serial /dev/ttyACM0      # real Node
+```
+
+`oftd` advertises itself over mDNS as `<id>._oft._tcp.local.` (spec §6.1); `--no-mdns` turns
+that off, `--id` sets the id. `cargo test -p oftd --test api mdns -- --ignored` checks the
+advertisement on a host with multicast.
+
 ## Design rules
 
 - Timestamps are taken on the Node and mapped to the Timer clock; network latency never

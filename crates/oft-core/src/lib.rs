@@ -17,7 +17,7 @@ pub mod host;
 
 pub use clock::ClockMap;
 pub use detect::{Config as DetectConfig, Detector, Threshold};
-pub use host::{Event, NodeHost};
+pub use host::{Event, NodeHost, MAX_SEATS};
 
 /// One pass of a quad through the gate. Times are µs; see the producer for which clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

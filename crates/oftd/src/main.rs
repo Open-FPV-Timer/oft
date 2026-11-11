@@ -31,6 +31,9 @@ struct Args {
     /// Timer id advertised to clients.
     #[arg(long)]
     id: Option<String>,
+    /// Do not advertise the Timer over mDNS (`_oft._tcp`).
+    #[arg(long)]
+    no_mdns: bool,
 }
 
 #[tokio::main]
@@ -69,11 +72,41 @@ async fn main() {
     match serve(timer.clone(), args.listen).await {
         Ok((addr, server)) => {
             eprintln!("oftd {} serving http://{addr}/oft/v1  (ws: /oft/v1/stream)", timer.cfg.id);
-            let _ = tokio::join!(server, driver);
+            let mdns = if args.no_mdns {
+                None
+            } else {
+                match oftd::mdns::advertise(timer.clone(), addr) {
+                    Ok(a) => {
+                        eprintln!("oftd: advertising {} over mDNS", a.fullname());
+                        Some(a)
+                    }
+                    Err(e) => {
+                        eprintln!("oftd: mDNS advertising unavailable: {e}");
+                        None
+                    }
+                }
+            };
+            tokio::select! {
+                _ = async { tokio::join!(server, driver) } => {}
+                _ = shutdown_signal() => {}
+            }
+            if let Some(a) = mdns {
+                a.shutdown();
+            }
         }
         Err(e) => {
             eprintln!("oftd: cannot bind {}: {e}", args.listen);
             std::process::exit(1);
         }
+    }
+}
+
+/// Resolves on Ctrl-C or SIGTERM, so the mDNS goodbye is sent before exit.
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut term = signal(SignalKind::terminate()).expect("SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
     }
 }

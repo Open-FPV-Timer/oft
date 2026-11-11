@@ -147,6 +147,112 @@ async fn config_round_trips_and_replans_the_node() {
 }
 
 #[tokio::test]
+async fn seats_can_carry_their_own_threshold() {
+    let s = start(0.0).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let client = reqwest::Client::new();
+    let url = format!("{}/config", s.base);
+    assert_eq!(get(&format!("{}/info", s.base)).await["capabilities"]["config"]["seat_thresholds"], true);
+
+    // Seat 1 has its own manual levels; seat 0 uses the Timer-wide one; seat 2 says null.
+    let body = serde_json::json!({
+        "seats": [
+            { "seat": 0, "freq_mhz": 5658, "enabled": true },
+            { "seat": 1, "freq_mhz": 5732, "enabled": true, "threshold": { "mode": "manual", "enter": -700, "exit": -760 } },
+            { "seat": 2, "freq_mhz": 5806, "enabled": true, "threshold": null },
+        ],
+        "seats_per_node": 8,
+        "threshold": { "mode": "manual", "enter": -500, "exit": -550 },
+        "min_lap_ms": 2000,
+    });
+    let r = client.put(&url).json(&body).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    let back = get(&url).await;
+    assert_eq!(back["threshold"], body["threshold"]);
+    assert!(back["seats"][0].get("threshold").is_none(), "{back}");
+    assert_eq!(back["seats"][1]["threshold"], body["seats"][1]["threshold"]);
+    assert!(back["seats"][2].get("threshold").is_none(), "null reads back as absent: {back}");
+    let st = get(&format!("{}/status", s.base)).await;
+    assert_eq!((st["seats"][0]["enter"].as_i64(), st["seats"][0]["exit"].as_i64()), (Some(-500), Some(-550)), "{st}");
+    assert_eq!((st["seats"][1]["enter"].as_i64(), st["seats"][1]["exit"].as_i64()), (Some(-700), Some(-760)), "{st}");
+    assert_eq!(st["seats"][2]["enter"], -500);
+
+    // A v0.3 client's PUT (no seat thresholds) still works and clears seat 1's own levels.
+    let v03 = serde_json::json!({
+        "seats": [{ "seat": 0, "freq_mhz": 5658, "enabled": true }, { "seat": 1, "freq_mhz": 5732, "enabled": true }],
+        "seats_per_node": 8,
+        "threshold": { "mode": "auto", "snr_enter": 120, "hysteresis": 40 },
+        "min_lap_ms": 2000,
+    });
+    let r = client.put(&url).json(&v03).send().await.unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(get(&url).await, v03);
+    let inner = s.timer.inner.lock().unwrap();
+    assert_eq!(inner.host.seat_threshold(1), None);
+    assert_eq!(inner.host.detector(1).unwrap().config().threshold, oft_core::Threshold::Auto { snr_enter: 120, hysteresis: 40 });
+}
+
+#[tokio::test]
+async fn discovery_txt_follows_the_timer() {
+    let s = start(0.0).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let txt: std::collections::HashMap<_, _> = s.timer.discovery_txt().into_iter().collect();
+    assert_eq!(txt["id"], "oft-test");
+    assert_eq!(txt["proto"], "1");
+    assert_eq!(txt["seats"], "1");
+    assert_eq!(txt["nodes"], "1");
+    assert_eq!(txt["level"], "L3");
+    assert_eq!(txt["fw"], env!("CARGO_PKG_VERSION"));
+}
+
+/// Needs multicast on the host, so it is not part of the default run:
+/// `cargo test -p oftd --test api mdns -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn mdns_advertises_the_timer() {
+    use mdns_sd::{ServiceDaemon, ServiceEvent};
+    let s = start(0.0).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let port = s.base.split(':').nth(2).unwrap().split('/').next().unwrap().parse::<u16>().unwrap();
+    let adv = oftd::mdns::advertise(s.timer.clone(), format!("0.0.0.0:{port}").parse().unwrap()).unwrap();
+    assert_eq!(adv.fullname(), "oft-test._oft._tcp.local.");
+
+    let browser = ServiceDaemon::new().unwrap();
+    let rx = browser.browse(oftd::mdns::SERVICE_TYPE).unwrap();
+    let wait_for = |seats: &'static str| {
+        let rx = rx.clone();
+        async move {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if let ServiceEvent::ServiceResolved(r) = rx.recv_async().await.unwrap() {
+                        if r.fullname == "oft-test._oft._tcp.local." && r.txt_properties.get_property_val_str("seats") == Some(seats) {
+                            return r;
+                        }
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("service with seats={seats} not seen within 10 s"))
+        }
+    };
+    let found = wait_for("1").await;
+    assert_eq!(found.port, port);
+    assert_eq!(found.host, "oft-test.local.");
+    assert!(!found.addresses.is_empty());
+    for (k, v) in [("id", "oft-test"), ("proto", "1"), ("nodes", "1"), ("level", "L3")] {
+        assert_eq!(found.txt_properties.get_property_val_str(k), Some(v), "TXT {k}");
+    }
+
+    // The TXT record is re-announced when the seat count changes.
+    let mut cfg = Config::default();
+    cfg.seats.push(oftd::protocol::SeatConfig { seat: 1, freq_mhz: 5732, enabled: true, threshold: None });
+    s.timer.set_config(cfg);
+    wait_for("2").await;
+    let _ = browser.shutdown();
+    tokio::task::spawn_blocking(move || adv.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
 async fn websocket_hello_sub_and_live_crossings() {
     let s = start(1.0).await;
     let (mut ws, _) = tokio_tungstenite::connect_async(&s.ws_url).await.unwrap();
@@ -154,6 +260,7 @@ async fn websocket_hello_sub_and_live_crossings() {
     assert_eq!(hello["type"], "hello");
     assert_eq!(hello["timer"], "oft-test");
     assert!(hello["capabilities"]["crossings"].is_object());
+    assert_eq!(hello["capabilities"]["config"]["seat_thresholds"], true);
 
     ws.send(WsMsg::Text(r#"{"type":"sub","crossings":{},"samples":{"seats":"all","decimate":10},"status":true}"#.into())).await.unwrap();
     let mut got_ack = false;

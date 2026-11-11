@@ -5,7 +5,7 @@
 //! Timer time of their own SYNC pulses and pings. It has no I/O of its own.
 
 use crate::clock::ClockMap;
-use crate::detect::{Config, Detector};
+use crate::detect::{Config, Detector, Threshold};
 use crate::Crossing;
 use oft_nodelink::msg::{Hello, Message, Plan, Samples, Status};
 
@@ -36,6 +36,8 @@ pub struct NodeHost {
     clock: ClockMap,
     detectors: [Option<Detector>; MAX_SEATS],
     cfg: Config,
+    /// Per-seat threshold overrides; `None` uses `cfg.threshold`.
+    seat_thresholds: [Option<Threshold>; MAX_SEATS],
     hello: Option<Hello>,
     plan: Option<Plan>,
     pings: [Option<Outstanding>; 4],
@@ -57,6 +59,7 @@ impl NodeHost {
             clock: ClockMap::new(),
             detectors: core::array::from_fn(|_| None),
             cfg,
+            seat_thresholds: [None; MAX_SEATS],
             hello: None,
             plan: None,
             pings: [None; 4],
@@ -101,11 +104,42 @@ impl NodeHost {
         &self.cfg
     }
 
-    /// Change detection settings for every seat (takes effect immediately).
+    /// Detection settings in use for `seat`: the shared config with that seat's threshold
+    /// override, if it has one.
+    pub fn seat_detect_config(&self, seat: u8) -> Config {
+        match self.seat_thresholds.get(seat as usize).copied().flatten() {
+            Some(threshold) => Config { threshold, ..self.cfg },
+            None => self.cfg,
+        }
+    }
+
+    /// A seat's own threshold, if set.
+    pub fn seat_threshold(&self, seat: u8) -> Option<Threshold> {
+        self.seat_thresholds.get(seat as usize).copied().flatten()
+    }
+
+    /// Change the shared detection settings (takes effect immediately). Seats with their
+    /// own threshold keep it.
     pub fn set_detect_config(&mut self, cfg: Config) {
         self.cfg = cfg;
-        for d in self.detectors.iter_mut().flatten() {
-            d.set_config(cfg);
+        self.apply_detect_configs();
+    }
+
+    /// Give `seat` its own threshold, or `None` to go back to the shared one (takes effect
+    /// immediately). Seats outside `MAX_SEATS` are ignored.
+    pub fn set_seat_threshold(&mut self, seat: u8, threshold: Option<Threshold>) {
+        if let Some(slot) = self.seat_thresholds.get_mut(seat as usize) {
+            *slot = threshold;
+            self.apply_detect_configs();
+        }
+    }
+
+    fn apply_detect_configs(&mut self) {
+        for seat in 0..MAX_SEATS {
+            let cfg = self.seat_detect_config(seat as u8);
+            if let Some(d) = self.detectors[seat].as_mut() {
+                d.set_config(cfg);
+            }
         }
     }
 
@@ -115,8 +149,9 @@ impl NodeHost {
             *d = None;
         }
         for &(seat, _) in plan.seats() {
+            let cfg = self.seat_detect_config(seat);
             if let Some(slot) = self.detectors.get_mut(seat as usize) {
-                *slot = Some(Detector::new(seat, self.cfg));
+                *slot = Some(Detector::new(seat, cfg));
             }
         }
         self.plan = Some(plan);
@@ -237,6 +272,37 @@ impl NodeHost {
 mod tests {
     use super::*;
     use oft_nodelink::msg::{Features, Hello, Pong, SyncEdge};
+
+    #[test]
+    fn a_seat_threshold_overrides_the_shared_one_and_survives_replanning() {
+        let own = Threshold::Manual { enter: -700, exit: -760 };
+        let shared = Threshold::Manual { enter: -500, exit: -550 };
+        let mut plan = Plan::with(0, 0, oft_nodelink::msg::GAIN_AUTO);
+        plan.push(0, 5658).unwrap();
+        plan.push(1, 5732).unwrap();
+
+        let mut host = NodeHost::new(Config::default());
+        host.set_plan(plan);
+        host.set_seat_threshold(1, Some(own));
+        assert_eq!(host.detector(0).unwrap().config().threshold, Config::default().threshold);
+        assert_eq!(host.detector(1).unwrap().levels(), (-700, -760));
+
+        // The shared config changes under it; seat 1 keeps its own, and min-lap still applies.
+        host.set_detect_config(Config { threshold: shared, min_lap_us: 3_000_000, ..Config::default() });
+        assert_eq!(host.detector(0).unwrap().levels(), (-500, -550));
+        assert_eq!(host.detector(1).unwrap().levels(), (-700, -760));
+        assert_eq!(host.detector(1).unwrap().config().min_lap_us, 3_000_000);
+
+        // New detectors from a re-plan pick the override up too.
+        host.set_plan(plan);
+        assert_eq!(host.detector(1).unwrap().levels(), (-700, -760));
+
+        // Clearing it falls back to the shared one. Out-of-range seats are ignored.
+        host.set_seat_threshold(1, None);
+        host.set_seat_threshold(200, Some(own));
+        assert_eq!(host.detector(1).unwrap().levels(), (-500, -550));
+        assert_eq!(host.seat_threshold(1), None);
+    }
 
     #[test]
     fn pongs_are_ignored_once_a_sync_wire_is_seen() {
