@@ -25,8 +25,9 @@ pub fn router(timer: Arc<Timer>) -> Router {
     Router::new().nest(API_PREFIX, api).route("/", get(root)).with_state(timer)
 }
 
-async fn root() -> &'static str {
-    "oftd — OFT Timer. API under /oft/v1, WebSocket at /oft/v1/stream.\n"
+/// The built-in diagnostics page (the same file every Timer host serves).
+async fn root() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../../../web/timer.html"))
 }
 
 async fn info(State(t): State<Arc<Timer>>) -> Json<serde_json::Value> {
@@ -43,6 +44,9 @@ async fn put_config(State(t): State<Arc<Timer>>, Json(c): Json<Config>) -> Respo
     }
     if c.seats.iter().any(|s| !(5000..=6200).contains(&s.freq_mhz)) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "freq_mhz out of range"}))).into_response();
+    }
+    if c.exit_hold_ms > 1000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "exit_hold_ms must be 0..1000"}))).into_response();
     }
     t.set_config(c.clone());
     Json(c).into_response()

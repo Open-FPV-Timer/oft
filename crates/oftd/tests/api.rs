@@ -128,6 +128,7 @@ async fn config_round_trips_and_replans_the_node() {
     assert_eq!(cfg.seats[0].freq_mhz, 5800);
     cfg.seats[0].freq_mhz = 5740;
     cfg.min_lap_ms = 3000;
+    cfg.exit_hold_ms = 150;
     cfg.threshold = oftd::protocol::ThresholdConfig::Manual { enter: -760, exit: -800 };
     let r = client.put(format!("{}/config", s.base)).json(&cfg).send().await.unwrap();
     assert_eq!(r.status(), 200);
@@ -144,6 +145,7 @@ async fn config_round_trips_and_replans_the_node() {
     // Detector config really changed.
     let inner = s.timer.inner.lock().unwrap();
     assert_eq!(inner.host.detect_config().min_lap_us, 3_000_000);
+    assert_eq!(inner.host.detect_config().exit_hold_us, 150_000);
 }
 
 #[tokio::test]
@@ -186,7 +188,10 @@ async fn seats_can_carry_their_own_threshold() {
     });
     let r = client.put(&url).json(&v03).send().await.unwrap();
     assert_eq!(r.status(), 200);
-    assert_eq!(get(&url).await, v03);
+    // It reads back with the default exit hold-off filled in.
+    let mut expect = v03.clone();
+    expect["exit_hold_ms"] = 100.into();
+    assert_eq!(get(&url).await, expect);
     let inner = s.timer.inner.lock().unwrap();
     assert_eq!(inner.host.seat_threshold(1), None);
     assert_eq!(inner.host.detector(1).unwrap().config().threshold, oft_core::Threshold::Auto { snr_enter: 120, hysteresis: 40 });

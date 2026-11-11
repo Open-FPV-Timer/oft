@@ -41,6 +41,14 @@ pub struct Config {
     /// Timer-wide default; a seat's own `threshold` overrides it for that seat.
     pub threshold: ThresholdConfig,
     pub min_lap_ms: u32,
+    /// Exit hold-off: how long the signal must stay below the exit level before a crossing
+    /// ends. Absent (older clients) means the default.
+    #[serde(default = "default_exit_hold_ms")]
+    pub exit_hold_ms: u32,
+}
+
+pub fn default_exit_hold_ms() -> u32 {
+    (oft_core::DetectConfig::default().exit_hold_us / 1000) as u32
 }
 
 impl Default for Config {
@@ -50,6 +58,7 @@ impl Default for Config {
             seats_per_node: 8,
             threshold: ThresholdConfig::Auto { snr_enter: 150, hysteresis: 50 },
             min_lap_ms: 2000,
+            exit_hold_ms: default_exit_hold_ms(),
         }
     }
 }
@@ -124,6 +133,23 @@ pub struct SeatStatus {
     pub crossing: bool,
 }
 
+/// Health of the Node link, so lost samples can be traced to their cause. Counts since the
+/// Timer started; `null` where this host cannot tell.
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkJson {
+    /// Samples the Node's timestamps show were never received.
+    pub gap_samples: u32,
+    /// Messages that arrived damaged (bad checksum or framing).
+    pub crc_errors: u32,
+    /// Receive errors reported by the serial port (overrun, framing, noise).
+    pub uart_errors: Option<u32>,
+    /// Messages the Node says it dropped before sending.
+    pub node_overruns: Option<u16>,
+    pub node_hop_errors: Option<u16>,
+    /// Gain index in use on the Node (255 = automatic).
+    pub node_gain: Option<u8>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusJson {
     #[serde(rename = "type")]
@@ -137,6 +163,7 @@ pub struct StatusJson {
     pub clock_source: &'static str,
     pub drift_ppm: Option<f64>,
     pub node_connected: bool,
+    pub link: LinkJson,
     pub seats: Vec<SeatStatus>,
     pub clients: usize,
 }

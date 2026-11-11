@@ -2,7 +2,7 @@
 //! driver loop that moves bytes between the link and the host.
 
 use crate::link::NodeLink;
-use crate::protocol::{self, Config, CrossingJson, SamplesJson, SeatStatus, StatusJson};
+use crate::protocol::{self, Config, CrossingJson, LinkJson, SamplesJson, SeatStatus, StatusJson};
 use oft_core::{Crossing, DetectConfig, Event, NodeHost, MAX_SEATS};
 use oft_nodelink::msg::{Message, Plan, Samples, GAIN_AUTO};
 use oft_nodelink::{encode_frame, FrameDecoder, MAX_FRAME};
@@ -65,6 +65,8 @@ pub struct Inner {
     history: Vec<Option<SeatHistory>>,
     node_connected: bool,
     node_temp_dc: Option<i16>,
+    node_status: Option<oft_nodelink::msg::Status>,
+    crc_errors: u32,
     last_node_rx: Option<Instant>,
 }
 
@@ -82,6 +84,7 @@ fn detect_config(c: &Config) -> DetectConfig {
     DetectConfig {
         threshold: (&c.threshold).into(),
         min_lap_us: c.min_lap_ms as u64 * 1000,
+        exit_hold_us: c.exit_hold_ms as u64 * 1000,
         ..DetectConfig::default()
     }
 }
@@ -123,6 +126,8 @@ impl Timer {
                 history: (0..8).map(|_| None).collect(),
                 node_connected: false,
                 node_temp_dc: None,
+                node_status: None,
+                crc_errors: 0,
                 last_node_rx: None,
             }),
             link: Mutex::new(link),
@@ -217,6 +222,14 @@ impl Timer {
             clock_source: inner.host.sync_source(),
             drift_ppm: clock.is_synced().then(|| clock.drift_ppm()),
             node_connected: inner.node_connected,
+            link: LinkJson {
+                gap_samples: inner.host.dropped_samples,
+                crc_errors: inner.crc_errors,
+                uart_errors: None,
+                node_overruns: inner.node_status.map(|s| s.overruns),
+                node_hop_errors: inner.node_status.map(|s| s.hop_errors),
+                node_gain: inner.node_status.map(|s| s.gain_index),
+            },
             seats,
             clients: self.clients.load(Ordering::Relaxed),
         }
@@ -251,7 +264,7 @@ impl Timer {
                 "crossings": { "algorithms": ["edge_mid"], "replay": CROSSING_REPLAY, "fields": ["t_enter", "t_exit", "peak", "snr"] },
                 "samples.stream": { "rate_hz": 1000, "decimate": [1, 2, 5, 10, 20, 50] },
                 "samples.history": { "full_rate_s": HISTORY_S, "reduced_rate_s": 0, "reduced_hz": 0 },
-                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seats_per_node": true, "seat_thresholds": true },
+                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seats_per_node": true, "seat_thresholds": true, "exit_hold_ms": true },
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
             },
         })
@@ -311,11 +324,19 @@ impl Timer {
                 inner.last_node_rx = Some(now);
                 inner.node_connected = true;
                 for b in bytes {
-                    if let Some(Ok(m)) = decoder.push(b) {
+                    let m = match decoder.push(b) {
+                        Some(Ok(m)) => Some(m),
+                        Some(Err(_)) => {
+                            inner.crc_errors = inner.crc_errors.wrapping_add(1);
+                            None
+                        }
+                        None => None,
+                    };
+                    if let Some(m) = m {
                         if let Message::Samples(s) = &m {
                             self.record_samples(&mut inner, s, t);
                         }
-                        let Inner { host, crossings, next_seq, node_temp_dc, .. } = &mut *inner;
+                        let Inner { host, crossings, next_seq, node_temp_dc, node_status, .. } = &mut *inner;
                         host.feed(&m, t, |e| match e {
                             Event::Hello(_) => replan = true,
                             Event::Crossing(c) => {
@@ -327,7 +348,10 @@ impl Timer {
                                 }
                                 let _ = self.events.send(Outgoing::Crossing(CrossingJson::new(seq, &c)));
                             }
-                            Event::Status(s) => *node_temp_dc = Some(s.temp_dc),
+                            Event::Status(s) => {
+                                *node_temp_dc = Some(s.temp_dc);
+                                *node_status = Some(s);
+                            }
                             Event::Synced => {}
                         });
                     }

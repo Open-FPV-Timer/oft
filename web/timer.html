@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OFT Timer</title>
+<link rel="icon" href="data:,">
+<!--
+  The Timer's built-in diagnostics page. One self-contained file, served at "/" by every
+  Timer host (oftd, the RP2350 firmware). It only uses the OFT Protocol on its own origin:
+  HTTP under /oft/v1 and the WebSocket /oft/v1/stream. No external resources: it must work
+  on a network with no internet. GPL-3.0-or-later.
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5b6570; --line: #d5dbe1;
+    --accent: #1f4e8c; --accent-ink: #ffffff; --ok: #1a7f4b; --ok-bg: #e3f4ea;
+    --warn: #9a5b00; --warn-bg: #fdf1dc; --bad: #b3261e; --bad-bg: #fbe6e4; --code: #eef1f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b; --panel: #1c2026; --ink: #e6e9ed; --muted: #9aa5b1; --line: #323a44;
+      --accent: #6ea8ef; --accent-ink: #0d1117; --ok: #5fd08f; --ok-bg: #173224;
+      --warn: #f0b860; --warn-bg: #3a2c12; --bad: #ff8f85; --bad-bg: #3d1c19; --code: #262c34;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px 16px 60px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 4px; }
+  h1 { font-size: 1.4rem; margin: 0; }
+  h2 { font-size: 1.02rem; margin: 0 0 8px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+  .small { font-size: 0.85rem; color: var(--muted); }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 0.82rem; font-weight: 600; background: var(--code); }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+  .tile { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+  .tile b { display: block; font-size: 0.75rem; color: var(--muted); font-weight: 600; }
+  .tile span { overflow-wrap: anywhere; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 6px; padding: 7px 13px; font: inherit; font-weight: 600; cursor: pointer; }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  input[type=number] { width: 92px; }
+  canvas { display: block; width: 100%; height: 220px; background: var(--code); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow: auto; max-height: 300px; }
+  #msg { min-height: 1.3em; }
+  .tile.alert { border-color: var(--bad); background: var(--bad-bg); }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1 id="title">OFT Timer</h1>
+  <span id="conn" class="pill warn">connecting</span>
+  <span id="ident" class="small"></span>
+</header>
+<div id="msg" class="small"></div>
+
+<section>
+  <h2>Status</h2>
+  <div class="grid">
+    <div class="tile"><b>Node</b><span id="s-node">-</span></div>
+    <div class="tile"><b>Clock</b><span id="s-clock">-</span></div>
+    <div class="tile"><b>Sample rate</b><span id="s-rate">-</span></div>
+    <div class="tile"><b>Uptime</b><span id="s-up">-</span></div>
+    <div class="tile"><b>Node temperature</b><span id="s-temp">-</span></div>
+    <div class="tile"><b>Clients</b><span id="s-clients">-</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>Node link <span class="small">(counts since the Timer started; rate over the last 10 s)</span></h2>
+  <div class="grid">
+    <div class="tile" id="l-gap-t"><b>Samples missing</b><span id="l-gap">-</span></div>
+    <div class="tile" id="l-crc-t"><b>Damaged messages (checksum)</b><span id="l-crc">-</span></div>
+    <div class="tile" id="l-uart-t"><b>Serial receive errors</b><span id="l-uart">-</span></div>
+    <div class="tile" id="l-over-t"><b>Dropped by the Node before sending</b><span id="l-over">-</span></div>
+    <div class="tile"><b>Node hop errors</b><span id="l-hop">-</span></div>
+    <div class="tile"><b>Node gain setting</b><span id="l-gain">-</span></div>
+  </div>
+  <div class="small" style="margin-top:8px">Missing samples with damaged messages or serial errors point at the wiring. Missing samples with drops at the Node point at the Node's firmware. Missing samples with neither counted mean whole messages vanish cleanly, which needs a closer look.</div>
+</section>
+
+<section>
+  <h2>Signal <select id="seat" aria-label="Seat"></select> <span id="c-info" class="small"></span></h2>
+  <canvas id="chart"></canvas>
+  <div class="small" style="margin-top:6px">Last 15 s. Line: signal. Red: enter level. Orange: exit level. Grey dashes: noise floor. Green band: a crossing, dark line at its timestamp. Blank stretches are samples that never arrived.</div>
+  <div class="row">
+    <button class="btn ghost" id="pause">Pause</button>
+    <span id="s-sig" class="small"></span>
+  </div>
+</section>
+
+<section>
+  <h2>Settings <span class="small">(not saved across a restart)</span></h2>
+  <div class="row">
+    <label>Frequency, MHz <input type="number" id="freq" min="5000" max="6200" step="1"></label>
+    <span class="small">Raceband: R1 5658, R2 5695, R3 5732, R4 5769, R5 5806, R6 5843, R7 5880, R8 5917</span>
+  </div>
+  <div class="row">
+    <select id="thmode" aria-label="Level mode">
+      <option value="auto">Auto: above the noise floor</option>
+      <option value="manual">Manual: fixed levels</option>
+    </select>
+    <label><span id="th-a-label">Enter, dB above floor</span> <input type="number" id="th-a" step="0.5"></label>
+    <label><span id="th-b-label">Exit, dB below enter</span> <input type="number" id="th-b" step="0.5"></label>
+  </div>
+  <div class="row">
+    <label id="hold-wrap">Exit hold-off, ms <input type="number" id="hold" min="0" max="1000" step="10"></label>
+    <label>Minimum lap, ms <input type="number" id="minlap" min="0" max="600000" step="100"></label>
+    <button class="btn" id="apply">Apply</button>
+    <button class="btn ghost" id="reload">Reload from Timer</button>
+  </div>
+  <div class="small">Applying restarts detection for every seat. Levels use the same dB scale as the chart.</div>
+</section>
+
+<section>
+  <h2>Crossings <button class="btn ghost" id="clear" style="padding:2px 10px;font-size:0.82rem">clear list</button></h2>
+  <div class="scroll"><table>
+    <thead><tr><th>#</th><th>Seat</th><th>Time</th><th>Since previous</th><th>Width</th><th>Peak</th><th>Above floor</th><th>Flags</th></tr></thead>
+    <tbody id="xings"><tr><td colspan="8" class="small">none yet</td></tr></tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Firmware</h2>
+  <div id="fw" class="small">-</div>
+  <div id="fwup" hidden>
+    <div id="fwup-now" class="small"></div>
+    <div id="fwup-form">
+      <div class="row">
+        <label>New firmware <input type="file" id="fwup-file" accept=".bin"></label>
+        <button class="btn" id="fwup-go" disabled>Update over the network…</button>
+      </div>
+      <progress id="fwup-bar" max="100" value="0" hidden style="width:100%"></progress>
+      <div id="fwup-state"></div>
+      <div class="small" style="margin-top:6px">Choose the <code>oft-timer.bin</code> written by <code>tools/uf2.py</code> (not the .uf2). The Timer stores it next to the firmware it is running, checks it, and restarts to try it. <b>Timing stops for the whole update</b>: while the file is stored (about half a minute) the Timer drops Node data, and then it restarts. The new firmware is on trial: if this page cannot reach it, the Timer restarts into the old firmware by itself within about a minute. Keep this page open until it reports the result.</div>
+    </div>
+  </div>
+  <div class="row" id="fw-actions" hidden>
+    <button class="btn ghost" id="bootsel">Restart into USB update mode…</button>
+    <button class="btn ghost" id="wiretest">Test the Node's reset and boot wires…</button>
+  </div>
+  <div id="wt" hidden>
+    <table style="margin-top:8px">
+      <tbody>
+        <tr><td>Reset wire (EN)</td><td id="wt-en">-</td></tr>
+        <tr><td>Boot wire (BOOT)</td><td id="wt-boot">-</td></tr>
+        <tr><td>Node back to normal</td><td id="wt-rec">-</td></tr>
+      </tbody>
+    </table>
+    <div id="wt-step" class="small"></div>
+  </div>
+</section>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const API = "/oft/v1";
+  const WINDOW_US = 15e6;
+  const db = (v) => (v == null ? "-" : (v / 10).toFixed(1) + " dB");
+  const msg = (t) => { $("msg").textContent = t; };
+  const conn = (text, cls) => { const e = $("conn"); e.textContent = text; e.className = "pill " + cls; };
+  const json = async (path, opts) => {
+    const r = await fetch(API + path, opts);
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    return body;
+  };
+
+  let info = null, status = null, config = null, seat = 0, paused = false, dirty = false;
+  let fwBusy = false;       // a firmware update of the Timer itself is in progress
+  let traces = {};          // seat -> [[t_us, p], ...]
+  let marks = [];           // crossings
+  let prevMid = {};         // seat -> t_mid of the previous crossing
+  let clockOff = null;      // Timer µs minus performance.now() µs, from the newest message
+  let frozenNow = null;
+  let rateHist = [];        // [{t, gap, crc, uart, over}] for the 10 s rates
+  let bootId = null, lastSeq = 0;
+
+  const timerNow = () => (frozenNow != null ? frozenNow : clockOff == null ? null : clockOff + performance.now() * 1000);
+  const seen = (t_us) => { const off = t_us - performance.now() * 1000; if (clockOff == null || off > clockOff || clockOff - off > 2e6) clockOff = off; };
+
+  // ---------------------------------------------------------------- info, config
+  async function loadInfo() {
+    info = await json("/info");
+    $("title").textContent = info.name || "OFT Timer";
+    document.title = `${info.id} · OFT Timer`;
+    $("ident").textContent = `${info.id} · ${info.host} · protocol ${info.proto} · level ${info.level}`;
+    const nodes = (info.nodes || []).map((n) => `Node ${n.id} (${n.chip}, firmware ${n.fw}, ${n.link}, ${n.range_mhz ? n.range_mhz.join("–") + " MHz" : ""})`);
+    $("fw").textContent = `Timer firmware ${info.fw} on ${info.host}. ` + (nodes.length ? nodes.join("; ") + "." : "No Node has introduced itself yet.");
+    $("fw-actions").hidden = info.host !== "rp2350";
+    if (info.host === "rp2350" && $("wt").hidden) pollWireTest();
+    if (info.host === "rp2350" && !fwBusy) loadFwTimer();
+    if (bootId && bootId !== info.boot_id) { msg("The Timer restarted; settings are back to their defaults."); resetData(); dirty = false; await loadConfig(); }
+    bootId = info.boot_id;
+  }
+
+  function resetData() { traces = {}; marks = []; prevMid = {}; lastSeq = 0; rateHist = []; clockOff = null; $("xings").innerHTML = '<tr><td colspan="8" class="small">none yet</td></tr>'; }
+
+  function thLabels() {
+    const manual = $("thmode").value === "manual";
+    $("th-a-label").textContent = manual ? "Enter, dB" : "Enter, dB above floor";
+    $("th-b-label").textContent = manual ? "Exit, dB" : "Exit, dB below enter";
+  }
+
+  function seatConfig() { return ((config && config.seats) || []).find((s) => s.seat === seat); }
+
+  function showConfig() {
+    if (!config) return;
+    const seats = (config.seats || []).filter((s) => s.enabled);
+    const sel = $("seat");
+    sel.innerHTML = "";
+    for (const s of seats) { const o = document.createElement("option"); o.value = s.seat; o.textContent = `seat ${s.seat}`; sel.appendChild(o); }
+    if (!seats.some((s) => s.seat === seat) && seats.length) seat = seats[0].seat;
+    sel.value = seat;
+    sel.hidden = seats.length < 2;
+    const sc = seatConfig();
+    if (sc) $("freq").value = sc.freq_mhz;
+    const t = (sc && sc.threshold) || config.threshold;
+    $("thmode").value = t.mode === "manual" ? "manual" : "auto";
+    $("th-a").value = ((t.mode === "manual" ? t.enter : t.snr_enter) / 10).toFixed(1);
+    $("th-b").value = ((t.mode === "manual" ? t.exit : t.hysteresis) / 10).toFixed(1);
+    thLabels();
+    $("hold-wrap").hidden = config.exit_hold_ms == null;
+    if (config.exit_hold_ms != null) $("hold").value = config.exit_hold_ms;
+    $("minlap").value = config.min_lap_ms;
+  }
+
+  async function loadConfig() { config = await json("/config"); if (!dirty) showConfig(); }
+
+  for (const id of ["freq", "th-a", "th-b", "hold", "minlap"]) $(id).addEventListener("input", () => { dirty = true; });
+  $("thmode").addEventListener("change", () => {
+    dirty = true;
+    thLabels();
+    const s = status && (status.seats || []).find((x) => x.seat === seat);
+    if ($("thmode").value === "manual" && s && s.enter != null) { $("th-a").value = (s.enter / 10).toFixed(1); $("th-b").value = (s.exit / 10).toFixed(1); }
+    else if ($("thmode").value === "auto") { $("th-a").value = "15.0"; $("th-b").value = "5.0"; }
+  });
+  $("seat").addEventListener("change", () => { seat = Number($("seat").value); dirty = false; showConfig(); });
+  $("reload").addEventListener("click", async () => { dirty = false; try { await loadConfig(); msg("Settings reloaded."); } catch (e) { msg("Could not read settings: " + e.message); } });
+
+  $("apply").addEventListener("click", async () => {
+    const f = Number($("freq").value), a = Math.round(Number($("th-a").value) * 10), b = Math.round(Number($("th-b").value) * 10);
+    const manual = $("thmode").value === "manual";
+    if (!(f >= 5000 && f <= 6200)) return msg("Frequency must be 5000 to 6200 MHz.");
+    if ($("th-a").value === "" || $("th-b").value === "" || !Number.isFinite(a) || !Number.isFinite(b)) return msg("Fill in both levels.");
+    if (manual && b >= a) return msg("Exit must be lower than enter.");
+    if (!manual && (a <= 0 || b <= 0 || b >= a)) return msg("Auto: enter must be above 0, and the exit gap between 0 and the enter value.");
+    try {
+      const c = await json("/config");
+      const th = manual ? { mode: "manual", enter: a, exit: b } : { mode: "auto", snr_enter: a, hysteresis: b };
+      const sc = (c.seats || []).find((s) => s.seat === seat);
+      if (sc) sc.freq_mhz = f;
+      // A seat that has its own levels keeps having its own; otherwise change the Timer-wide ones.
+      if (sc && sc.threshold) sc.threshold = th; else c.threshold = th;
+      if (c.exit_hold_ms != null && $("hold").value !== "") c.exit_hold_ms = Math.max(0, Math.min(1000, Math.round(Number($("hold").value))));
+      if ($("minlap").value !== "") c.min_lap_ms = Math.max(0, Math.round(Number($("minlap").value)));
+      config = await json("/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
+      dirty = false;
+      showConfig();
+      msg("Settings applied. Detection has restarted.");
+    } catch (e) { msg("Could not apply: " + e.message); }
+  });
+
+  // ---------------------------------------------------------------- status
+  function rate(key, now, value) {
+    const old = rateHist.find((h) => now - h.t <= 10e6) || rateHist[0];
+    if (!old || now <= old.t) return 0;
+    return (value - old[key]) / ((now - old.t) / 1e6);
+  }
+
+  function showStatus(st) {
+    status = st;
+    $("s-node").innerHTML = st.node_connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>';
+    const err = st.clock_err_us == null ? "" : `, error ${st.clock_err_us.toFixed(1)} µs`;
+    const drift = st.drift_ppm == null ? "" : `, drift ${st.drift_ppm.toFixed(0)} ppm`;
+    $("s-clock").textContent = st.clock_synced ? `${st.clock_source}${err}${drift}` : `${st.clock_source || "none"}, not synced yet`;
+    const s = (st.seats || []).find((x) => x.seat === seat) || (st.seats || [])[0];
+    $("s-rate").textContent = s ? `${s.rate_hz} Hz` : "no seat";
+    const up = st.uptime_s;
+    $("s-up").textContent = up >= 3600 ? `${Math.floor(up / 3600)} h ${Math.floor((up % 3600) / 60)} min` : up >= 60 ? `${Math.floor(up / 60)} min ${up % 60} s` : `${up} s`;
+    $("s-temp").textContent = st.temp_c ? `${st.temp_c.toFixed(0)} °C` : "not reported";
+    $("s-clients").textContent = st.clients == null ? "-" : st.clients;
+    $("s-sig").textContent = s && s.rssi != null && s.floor != null
+      ? `now ${db(s.rssi)}, floor ${db(s.floor)}, ${((s.rssi - s.floor) / 10).toFixed(1)} dB above floor; enter ${db(s.enter)}, exit ${db(s.exit)}`
+      : "no samples yet";
+
+    const l = st.link || {};
+    const gap = l.gap_samples != null ? l.gap_samples : st.dropped;
+    const h = { t: st.time_us, gap: gap || 0, crc: l.crc_errors || 0, uart: l.uart_errors || 0, over: l.node_overruns || 0 };
+    rateHist.push(h);
+    while (rateHist.length > 2 && st.time_us - rateHist[1].t > 10e6) rateHist.shift();
+    const show = (id, key, value, unit, alertAbove) => {
+      if (value == null) { $(id).textContent = "not reported"; $(id + "-t").classList.remove("alert"); return; }
+      const r = rate(key, st.time_us, value);
+      $(id).textContent = `${value} (${r.toFixed(1)} ${unit}/s)`;
+      $(id + "-t").classList.toggle("alert", r > alertAbove);
+    };
+    const total = s && s.rate_hz ? s.rate_hz : 0;
+    show("l-gap", "gap", gap, "samples", total ? total * 0.005 : 5);
+    if (gap != null && total) $("l-gap").textContent += `, ${((rate("gap", st.time_us, gap) / total) * 100).toFixed(1)}%`;
+    show("l-crc", "crc", l.crc_errors, "msg", 0.05);
+    show("l-uart", "uart", l.uart_errors, "err", 0.05);
+    show("l-over", "over", l.node_overruns, "msg", 0.05);
+    $("l-hop").textContent = l.node_hop_errors == null ? "not reported" : l.node_hop_errors;
+    $("l-gain").textContent = l.node_gain == null ? "not reported" : l.node_gain === 255 ? "auto" : l.node_gain;
+  }
+
+  // ---------------------------------------------------------------- crossings
+  function addCrossing(c) {
+    if (c.seq <= lastSeq) return;
+    lastSeq = c.seq;
+    marks.push(c);
+    if (marks.length > 60) marks.shift();
+    const body = $("xings");
+    if (body.querySelector("td[colspan]")) body.innerHTML = "";
+    const gap = prevMid[c.seat] == null ? "-" : ((c.t_mid - prevMid[c.seat]) / 1e6).toFixed(3) + " s";
+    prevMid[c.seat] = c.t_mid;
+    const tr = document.createElement("tr");
+    const cells = [c.seq, c.seat, (c.t_mid / 1e6).toFixed(3) + " s", gap,
+      c.t_exit != null && c.t_enter != null ? ((c.t_exit - c.t_enter) / 1000).toFixed(0) + " ms" : "-", db(c.peak), db(c.snr), (c.flags || []).join(", ") || "-"];
+    for (const v of cells) { const td = document.createElement("td"); td.textContent = v; tr.appendChild(td); }
+    body.prepend(tr);
+    while (body.children.length > 200) body.lastChild.remove();
+  }
+  $("clear").addEventListener("click", () => { $("xings").innerHTML = '<tr><td colspan="8" class="small">none yet</td></tr>'; prevMid = {}; });
+
+  // ---------------------------------------------------------------- stream
+  let ws = null, retry = 500;
+  function connect() {
+    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + API + "/stream");
+    ws.onopen = () => {
+      retry = 500;
+      conn("live", "ok");
+      ws.send(JSON.stringify({ type: "sub", crossings: { since: lastSeq }, samples: { seats: "all", decimate: 5 }, status: true }));
+      loadInfo().then(loadConfig).catch((e) => msg("Could not read the Timer: " + e.message));
+    };
+    ws.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch { return; }
+      if (m.type === "samples") {
+        const tr = (traces[m.seat] = traces[m.seat] || []);
+        for (let k = 0; k < m.p.length; k++) tr.push([m.t0 + k * m.dt_us, m.p[k]]);
+        const tEnd = m.t0 + m.p.length * m.dt_us;
+        seen(tEnd);
+        const cut = tEnd - WINDOW_US - 2e6;
+        let drop = 0;
+        while (drop < tr.length && tr[drop][0] < cut) drop++;
+        if (drop) tr.splice(0, drop);
+      } else if (m.type === "crossing") addCrossing(m);
+      else if (m.type === "status") { seen(m.time_us); showStatus(m); }
+      else if (m.type === "hello") { if (bootId && m.boot_id && m.boot_id !== bootId) loadInfo().catch(() => {}); }
+    };
+    ws.onclose = () => {
+      conn("disconnected, retrying", "bad");
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 5000);
+    };
+    ws.onerror = () => ws.close();
+  }
+  // Node details arrive a little after the Timer starts; refresh them now and then.
+  setInterval(() => { if (ws && ws.readyState === 1) loadInfo().catch(() => {}); }, 15000);
+
+  $("pause").addEventListener("click", () => {
+    paused = !paused;
+    frozenNow = paused ? timerNow() : null;
+    $("pause").textContent = paused ? "Resume" : "Pause";
+  });
+
+  // ---------------------------------------------------------------- chart
+  function draw() {
+    requestAnimationFrame(draw);
+    const cv = $("chart");
+    if (document.hidden || !cv.clientWidth) return;
+    const dpr = window.devicePixelRatio || 1, w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const g = cv.getContext("2d"), css = getComputedStyle(document.documentElement);
+    const col = (n) => css.getPropertyValue(n).trim();
+    g.clearRect(0, 0, w, h);
+    const now = timerNow(), s = status && (status.seats || []).find((x) => x.seat === seat), tr = traces[seat] || [];
+    if (now == null || !tr.length) { $("c-info").textContent = "waiting for samples"; return; }
+    const t0 = now - WINDOW_US;
+    let peak = -Infinity, low = Infinity;
+    for (const [t, p] of tr) if (t >= t0 && t <= now) { if (p > peak) peak = p; if (p < low) low = p; }
+    const floor = s && s.floor != null ? s.floor : low, enter = s ? s.enter : null, exit = s ? s.exit : null;
+    // Scale follows the levels: from 5 dB below the floor (or the exit level) to 15 dB above
+    // the enter level, at least 45 dB wide, stretched if a visible peak would be cut off.
+    const lo = Math.min(floor, exit == null ? floor : exit, low) - 50;
+    const hi = Math.max((enter == null ? floor : enter) + 150, lo + 450, peak + 30);
+    const x = (t) => ((t - t0) / WINDOW_US) * w, y = (p) => h - ((p - lo) / (hi - lo)) * h;
+    g.globalAlpha = 0.3; g.fillStyle = col("--ok");
+    for (const c of marks) if (c.seat === seat && c.t_exit >= t0) g.fillRect(x(c.t_enter), 0, Math.max(dpr, x(c.t_exit) - x(c.t_enter)), h);
+    g.globalAlpha = 1; g.fillStyle = col("--ok");
+    for (const c of marks) if (c.seat === seat && c.t_mid >= t0) g.fillRect(x(c.t_mid) - dpr, 0, 2 * dpr, h);
+    const line = (p, color, dash) => { if (p == null) return; g.strokeStyle = color; g.lineWidth = dpr; g.setLineDash(dash); g.beginPath(); g.moveTo(0, y(p)); g.lineTo(w, y(p)); g.stroke(); g.setLineDash([]); };
+    line(floor, col("--muted"), [4 * dpr, 4 * dpr]);
+    line(exit, col("--warn"), []);
+    line(enter, col("--bad"), []);
+    // Break the line where samples are missing, so holes are visible.
+    g.strokeStyle = col("--accent"); g.lineWidth = 1.5 * dpr; g.beginPath();
+    let prev = null, step = 0;
+    for (const [t, p] of tr) {
+      if (t < t0 || t > now) { prev = null; continue; }
+      if (prev != null) step = step ? Math.min(step, t - prev) : t - prev;
+      if (prev == null || (step && t - prev > 2.5 * step)) g.moveTo(x(t), y(p)); else g.lineTo(x(t), y(p));
+      prev = t;
+    }
+    g.stroke();
+    g.fillStyle = col("--muted"); g.font = `${11 * dpr}px system-ui, sans-serif`;
+    g.fillText(db(hi), 4 * dpr, 12 * dpr); g.fillText(db(lo), 4 * dpr, h - 4 * dpr);
+    $("c-info").textContent = `highest in view ${db(peak)}` + (s && s.floor != null ? ` (${((peak - s.floor) / 10).toFixed(1)} dB above floor)` : "") + (paused ? " · paused" : "");
+  }
+
+  // ---------------------------------------------------------------- firmware
+  $("bootsel").addEventListener("click", async () => {
+    if (!confirm("Restart the Timer into USB update mode?\n\nIt stops timing and waits on its USB-C port as a drive named RP2350. Copy a .uf2 onto that drive to bring it back, or power-cycle it to return to the current firmware.")) return;
+    try { await json("/fw/bootsel", { method: "POST" }); msg("The Timer is restarting into USB update mode."); }
+    catch (e) { msg("Could not restart into update mode: " + e.message); }
+  });
+
+  // ---------------------------------------------------------------- firmware update over the network
+  // Only on a Timer that updates itself (the RP2350 firmware): POST /fw/timer stores the
+  // image in the spare flash slot and restarts into it on trial. The new firmware confirms
+  // itself once a client has reached it, which the polling below does.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const buildText = (b) => (b == null ? "an unnumbered build" : `build ${b} (${new Date((1577836800 + b) * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC)`);
+  const fwState = (text, cls) => { $("fwup-state").innerHTML = ""; const e = document.createElement("span"); e.className = cls ? "pill " + cls : "small"; e.textContent = text; $("fwup-state").append(e); };
+  const fwTimer = async (ms) => {
+    const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
+    try { return await json("/fw/timer", { signal: ac.signal, cache: "no-store" }); } finally { clearTimeout(timer); }
+  };
+  function showFwTimer(f) {
+    const self = info && info.capabilities && info.capabilities["fw.update"] && info.capabilities["fw.update"].self;
+    $("fwup").hidden = false;
+    $("fwup-form").hidden = !(f.supported && self);
+    if (!f.supported) { $("fwup-now").textContent = "Update over the network is not available: " + (f.reason || "not supported by this firmware") + "."; return; }
+    const other = f.other == null ? "The other slot is empty." : f.other.confirmed ? `The other slot holds ${buildText(f.other.build)}.` : `The other slot holds ${buildText(f.other.build)}, which was never confirmed.`;
+    const state = f.state === "trial" ? " It is on trial after an update and has not confirmed itself yet." : f.state === "restarting" ? " It is about to restart into new firmware." : "";
+    $("fwup-now").textContent = `Running ${buildText(f.build)} from slot ${f.slot}.${state} ${other}`;
+  }
+  async function loadFwTimer() {
+    try { showFwTimer(await fwTimer(3000)); } catch { $("fwup").hidden = true; /* this firmware has no network update */ }
+  }
+  const fwPost = (file, onProgress) => new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("POST", API + "/fw/timer");
+    x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    x.onload = () => {
+      let body = {};
+      try { body = JSON.parse(x.responseText); } catch { /* not JSON */ }
+      if (x.status === 200 && body.ok) resolve(body); else reject(new Error(body.error || `HTTP ${x.status}`));
+    };
+    x.onerror = () => reject(new Error("the connection to the Timer was lost while sending"));
+    x.send(file);
+  });
+  $("fwup-file").addEventListener("change", () => { $("fwup-go").disabled = fwBusy || !$("fwup-file").files.length; });
+  $("fwup-go").addEventListener("click", async () => {
+    const file = $("fwup-file").files[0];
+    if (!file || fwBusy) return;
+    if (!confirm(`Update the Timer's firmware with ${file.name} (${(file.size / 1024).toFixed(0)} KB)?\n\nTiming stops for about a minute: the Timer stores the file, restarts, and tries the new firmware. If the new firmware cannot be reached it goes back to the current one by itself.`)) return;
+    fwBusy = true; $("fwup-go").disabled = true; $("fwup-file").disabled = true;
+    const bar = $("fwup-bar"); bar.hidden = false; bar.value = 0;
+    try {
+      let before = null;
+      try { before = await fwTimer(3000); } catch { /* shown as unknown below */ }
+      if (/\.uf2$/i.test(file.name)) throw new Error("that is the USB install file; choose oft-timer.bin");
+      if (before && before.max_bytes && file.size > before.max_bytes) throw new Error(`the file is larger than a firmware slot (${before.max_bytes} bytes)`);
+      fwState("Sending and storing the firmware…");
+      const sent = await fwPost(file, (p) => { bar.value = 100 * p; if (p >= 1) fwState("Sent. The Timer is checking what it stored…"); });
+      bar.value = 100;
+      fwState(`Stored and verified ${buildText(sent.build)} in slot ${sent.slot}. The Timer is restarting to try it…`);
+      // Poll until the new firmware answers and confirms, or the old one comes back.
+      const t0 = Date.now();
+      let result = null, sawTrial = false;
+      while (!result && Date.now() - t0 < 90000) {
+        await sleep(1000);
+        let f;
+        try { f = await fwTimer(2000); } catch { continue; }
+        if (f.state === "restarting") continue;
+        if (f.slot === sent.slot && f.state === "confirmed") result = { ok: true, f };
+        else if (f.slot === sent.slot) { sawTrial = true; fwState("The new firmware is running and reachable; waiting for it to confirm itself…"); }
+        else result = { ok: false, f };
+      }
+      if (result && result.ok) {
+        fwState(`Update complete: the Timer now runs ${buildText(result.f.build)} from slot ${result.f.slot}.`, "ok");
+        showFwTimer(result.f);
+      } else if (result) {
+        fwState(`The update did not take: the Timer is back on ${buildText(result.f.build)} in slot ${result.f.slot}` + (before && before.build === result.f.build ? ", the firmware it ran before" : "") + `. The new firmware ${sawTrial ? "started but did not confirm itself" : "did not start or could not be reached in time"}. Nothing else changed; you can try again.`, "bad");
+        showFwTimer(result.f);
+      } else {
+        fwState("No answer from the Timer for 90 s. If the new firmware cannot be reached, the Timer goes back to the old one by itself about 45 s after restarting, or when its power is cycled. Check that it still has the same address, then reload this page.", "warn");
+      }
+    } catch (e) {
+      fwState("Update failed: " + e.message + ". The Timer keeps running its current firmware.", "bad");
+    }
+    bar.hidden = true; fwBusy = false; $("fwup-file").disabled = false; $("fwup-go").disabled = !$("fwup-file").files.length;
+    loadInfo().catch(() => {});
+  });
+
+  // ---------------------------------------------------------------- wiring test
+  const verdict = (v, okText, badText) => (v == null ? "waiting" : v ? `<span class="pill ok">${okText}</span>` : `<span class="pill bad">${badText}</span>`);
+  function showWireTest(w) {
+    $("wt").hidden = !(w.running || w.done);
+    $("wt-en").innerHTML = verdict(w.en_ok, `works: the Node restarted and was back in ${(w.en_ms / 1000).toFixed(1)} s`, "no restart seen within 90 s");
+    $("wt-boot").innerHTML = verdict(w.boot_ok, "works: the Node's built-in bootloader answered", "the bootloader did not answer");
+    $("wt-rec").innerHTML = verdict(w.recovered, `yes, after ${(w.recover_ms / 1000).toFixed(1)} s`, "not seen within 90 s; power-cycle the Timer");
+    $("wt-step").textContent = w.running ? `Running: ${w.step}…` : w.done ? "Finished. A failed boot wire with a working reset wire usually means the BOOT pad is not the pin the firmware assumes, or that wire is loose." : "";
+    $("wiretest").disabled = !!w.running;
+  }
+  async function pollWireTest() {
+    try {
+      const w = await json("/node/wiretest");
+      showWireTest(w);
+      if (w.running) setTimeout(pollWireTest, 1000);
+    } catch { /* this host has no wiring test */ }
+  }
+  $("wiretest").addEventListener("click", async () => {
+    if (!confirm("Test the Node's reset (EN) and boot (BOOT) wires?\n\nThe Timer restarts the Node three times. Timing stops while it runs, which can take a few minutes.")) return;
+    try { showWireTest(await json("/node/wiretest", { method: "POST" })); setTimeout(pollWireTest, 1000); }
+    catch (e) { msg("Could not start the wiring test: " + e.message); }
+  });
+
+  connect();
+  draw();
+})();
+</script>
+</body>
+</html>
