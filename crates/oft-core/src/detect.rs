@@ -32,6 +32,11 @@ pub struct Config {
     pub smooth_shift: u8,
     /// Crossings with SNR below this (0.1 dB) get `LOW_SNR`.
     pub low_snr: i16,
+    /// Exit hold-off: a crossing ends only once the trace has stayed below the exit level
+    /// for this many µs, so a short dip between the lobes of one pass does not split it.
+    /// 0 ends it on the first sample below. The crossing is reported this much later;
+    /// its timestamps are not affected.
+    pub exit_hold_us: u64,
 }
 
 impl Default for Config {
@@ -41,6 +46,7 @@ impl Default for Config {
             min_lap_us: 2_000_000,
             smooth_shift: 2,
             low_snr: 100,
+            exit_hold_us: 100_000,
         }
     }
 }
@@ -50,6 +56,8 @@ impl Default for Config {
 pub const CROSSING_CAP: usize = 2048;
 /// Pre-trigger samples copied into the crossing buffer when it starts.
 pub const PRE_CAP: usize = 128;
+/// Longest hole in the sample stream that is bridged by interpolation, in samples.
+pub const MAX_FILL: u64 = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -71,7 +79,12 @@ pub struct Detector {
     suppressed: bool,
     /// Previous sample time, to learn the sample period.
     prev_t: Option<u64>,
+    prev_power: i16,
+    /// Nominal sample period. Holes in the stream do not change it.
     dt_us: u64,
+    dt_known: bool,
+    /// Consecutive intervals that looked like holes; a long run means the rate really changed.
+    gap_run: u8,
     // Pre-trigger ring of smoothed samples.
     pre: [i16; PRE_CAP],
     pre_next: usize,
@@ -86,6 +99,9 @@ pub struct Detector {
     peak: i16,
     /// Floor frozen at crossing start, 0.1 dB.
     floor_at_enter: i16,
+    /// While in a crossing: time of the first sample of the current run below the exit
+    /// level, if the trace is below it now.
+    below_since: Option<u64>,
     flags: CrossingFlags,
 }
 
@@ -100,7 +116,10 @@ impl Detector {
             last_mid: None,
             suppressed: false,
             prev_t: None,
+            prev_power: 0,
             dt_us: 1000,
+            dt_known: false,
+            gap_run: 0,
             pre: [0; PRE_CAP],
             pre_next: 0,
             pre_count: 0,
@@ -110,6 +129,7 @@ impl Detector {
             enter_idx: 0,
             peak: i16::MIN,
             floor_at_enter: 0,
+            below_since: None,
             flags: CrossingFlags::empty(),
         }
     }
@@ -162,14 +182,47 @@ impl Detector {
 
     /// Feed one sample. `t` is on the **Node clock**; the returned crossing is on the Node
     /// clock too. Map with [`crate::ClockMap`] afterwards.
+    ///
+    /// Samples are expected at a steady rate. A hole (lost batches) of up to [`MAX_FILL`]
+    /// samples is filled by linear interpolation, so the buffers stay evenly spaced and a
+    /// hole inside a pass neither splits it nor shifts its timestamps. A longer outage ends
+    /// a crossing in progress as `TRUNCATED`.
     pub fn push(&mut self, t: u64, power: i16, flags: SampleFlags) -> Option<Crossing> {
+        let mut out = None;
         if let Some(prev) = self.prev_t {
             if t > prev {
-                self.dt_us = t - prev;
+                let d = t - prev;
+                if !self.dt_known || d < 2 * self.dt_us || self.gap_run >= 8 {
+                    self.dt_us = d;
+                    self.dt_known = true;
+                    self.gap_run = 0;
+                } else {
+                    self.gap_run += 1;
+                    let missing = (d + self.dt_us / 2) / self.dt_us - 1;
+                    if missing <= MAX_FILL {
+                        let (a, b) = (self.prev_power as i64, power as i64);
+                        for k in 1..=missing {
+                            let p = a + (b - a) * k as i64 / (missing as i64 + 1);
+                            let c = self.step(prev + k * self.dt_us, p as i16, SampleFlags::empty());
+                            out = out.or(c);
+                        }
+                    } else {
+                        self.pre_count = 0;
+                        if self.state == State::Crossing {
+                            self.flags.set(CrossingFlags::TRUNCATED);
+                            out = Some(self.finish(self.below_since.unwrap_or(prev)));
+                        }
+                    }
+                }
             }
         }
         self.prev_t = Some(t);
+        self.prev_power = power;
+        let c = self.step(t, power, flags);
+        out.or(c)
+    }
 
+    fn step(&mut self, t: u64, power: i16, flags: SampleFlags) -> Option<Crossing> {
         let s = match self.smoothed {
             Some(p) if self.cfg.smooth_shift > 0 => p + ((power as i32 - p as i32) >> self.cfg.smooth_shift) as i16,
             _ => power,
@@ -218,11 +271,18 @@ impl Detector {
                 }
                 self.store(s, flags);
                 if s < exit {
-                    return Some(self.finish(t));
+                    // The crossing ends where the trace first went below the exit level,
+                    // but only once it has stayed there for the hold-off.
+                    let since = *self.below_since.get_or_insert(t);
+                    if t.saturating_sub(since) >= self.cfg.exit_hold_us {
+                        return Some(self.finish(since));
+                    }
+                } else {
+                    self.below_since = None;
                 }
                 if self.len >= CROSSING_CAP {
                     self.flags.set(CrossingFlags::TRUNCATED);
-                    return Some(self.finish(t));
+                    return Some(self.finish(self.below_since.unwrap_or(t)));
                 }
                 None
             }
@@ -242,6 +302,7 @@ impl Detector {
         self.flags = CrossingFlags::empty();
         self.peak = s;
         self.floor_at_enter = floor;
+        self.below_since = None;
         // Copy pre-trigger history, oldest first.
         self.len = 0;
         let start = (self.pre_next + PRE_CAP - self.pre_count) % PRE_CAP;
@@ -281,8 +342,31 @@ impl Detector {
         let n = self.len;
         let dt = self.dt_us as f64;
 
-        // Rise: first index at or above the edge, interpolated from the sample before.
-        let i = (0..n).find(|&i| self.buf[i] >= edge).unwrap_or(self.enter_idx);
+        // Dips below the edge shorter than the hold-off belong to the pass, on both flanks.
+        let hold = (self.cfg.exit_hold_us / self.dt_us.max(1)) as usize;
+        // Rise: where the trace came up through the edge on its way into this crossing,
+        // interpolated from the sample before. Search from the enter sample, not from the
+        // start of the pre-trigger history: an earlier, separate bump is not this pass.
+        let e = self.enter_idx.min(n - 1);
+        let i = if self.buf[e] >= edge {
+            let mut i = e;
+            let mut below = 0;
+            for k in (0..e).rev() {
+                if self.buf[k] >= edge {
+                    i = k;
+                    below = 0;
+                } else {
+                    below += 1;
+                    if below > hold {
+                        break;
+                    }
+                }
+            }
+            i
+        } else {
+            // The edge is above the enter level (a strong pass): the rise comes later.
+            (e..n).find(|&i| self.buf[i] >= edge).unwrap_or(e)
+        };
         let t_rise = if i == 0 {
             0.0
         } else {
@@ -354,6 +438,69 @@ mod tests {
             t += 1000;
         }
         assert_eq!(found.len(), 2);
+    }
+
+    /// A 300 ms flat-topped pulse centred on `c`, on a quiet floor.
+    fn pulse(t: u64, c: u64) -> i16 {
+        if t.abs_diff(c) < 150_000 { -600 } else { -920 }
+    }
+
+    fn manual(exit_hold_us: u64) -> Config {
+        Config { threshold: Threshold::Manual { enter: -750, exit: -800 }, smooth_shift: 0, min_lap_us: 0, exit_hold_us, ..Config::default() }
+    }
+
+    #[test]
+    fn a_short_dip_does_not_split_a_pass_with_exit_hold_off() {
+        // One pass with a 40 ms drop to the floor in the middle.
+        let signal = |t: u64| if t.abs_diff(1_000_000) < 20_000 { -920 } else { pulse(t, 1_000_000) };
+        let run = |hold| {
+            let mut d = Detector::new(0, manual(hold));
+            (0..2_000u64).filter_map(|k| d.push(k * 1000, signal(k * 1000), SampleFlags::empty())).collect::<Vec<_>>()
+        };
+        assert_eq!(run(0).len(), 2, "without hold-off the dip splits the pass");
+        let held = run(100_000);
+        assert_eq!(held.len(), 1);
+        // Timestamps describe the pass, not the hold-off: it ended when the signal fell.
+        assert!(held[0].t_mid.abs_diff(1_000_000) < 2_000, "{:?}", held[0]);
+        assert!(held[0].t_exit.abs_diff(1_150_000) < 2_000, "{:?}", held[0]);
+    }
+
+    #[test]
+    fn a_bump_before_the_pass_does_not_move_its_time() {
+        // A separate bump above the exit level 100 ms before the pass, still inside the
+        // pre-trigger history, is not the pass's rising edge.
+        let signal = |t: u64| if (750_000..770_000).contains(&t) { -780 } else { pulse(t, 1_000_000) };
+        let mut d = Detector::new(0, manual(0));
+        let found: Vec<_> = (0..2_000u64).filter_map(|k| d.push(k * 1000, signal(k * 1000), SampleFlags::empty())).collect();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].t_mid.abs_diff(1_000_000) < 2_000, "{:?}", found[0]);
+    }
+
+    #[test]
+    fn a_hole_in_the_stream_does_not_split_or_shift_a_pass() {
+        // 60 ms of samples lost just before the pass starts, and 60 ms lost inside it.
+        let lost = |t: u64| (790_000..850_000).contains(&t) || (1_020_000..1_080_000).contains(&t);
+        let mut d = Detector::new(0, manual(100_000));
+        let found: Vec<_> = (0..2_000u64).map(|k| k * 1000).filter(|&t| !lost(t)).filter_map(|t| d.push(t, pulse(t, 1_000_000), SampleFlags::empty())).collect();
+        assert_eq!(found.len(), 1);
+        let c = found[0];
+        // The rising edge fell inside the first hole, so it is only known to within the hole.
+        assert!(c.t_mid.abs_diff(1_000_000) < 32_000, "{c:?}");
+        assert!(c.t_enter >= 790_000 && c.t_enter <= 851_000, "{c:?}");
+        assert!(c.t_exit.abs_diff(1_150_000) < 2_000, "{c:?}");
+        assert_eq!(d.dt_us, 1000, "a hole is not the sample period");
+    }
+
+    #[test]
+    fn a_long_outage_ends_a_crossing_as_truncated() {
+        let mut d = Detector::new(0, manual(100_000));
+        let mut found = Vec::new();
+        for t in (0..1_000u64).map(|k| k * 1000).chain((2_000..2_500u64).map(|k| k * 1000)) {
+            found.extend(d.push(t, pulse(t, 1_000_000), SampleFlags::empty()));
+        }
+        assert_eq!(found.len(), 1);
+        assert!(found[0].flags.contains(CrossingFlags::TRUNCATED));
+        assert!(found[0].t_exit <= 1_000_000);
     }
 
     #[test]
