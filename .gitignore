@@ -1,3 +1,5 @@
 /target
 **/*.rs.bk
 *.pdb
+/bench/.run/
+/bench/fw/

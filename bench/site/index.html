@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OFT bench bring-up</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5b6570; --line: #d5dbe1;
+    --accent: #1f4e8c; --accent-ink: #ffffff; --ok: #1a7f4b; --ok-bg: #e3f4ea;
+    --warn: #9a5b00; --warn-bg: #fdf1dc; --bad: #b3261e; --bad-bg: #fbe6e4; --code: #eef1f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b; --panel: #1c2026; --ink: #e6e9ed; --muted: #9aa5b1; --line: #323a44;
+      --accent: #6ea8ef; --accent-ink: #0d1117; --ok: #5fd08f; --ok-bg: #173224;
+      --warn: #f0b860; --warn-bg: #3a2c12; --bad: #ff8f85; --bad-bg: #3d1c19; --code: #262c34;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 0; }
+  h3 { font-size: 1rem; margin: 18px 0 6px; }
+  p { margin: 8px 0; }
+  .lede { color: var(--muted); margin-bottom: 20px; }
+  a { color: var(--accent); }
+  code, kbd { background: var(--code); border-radius: 4px; padding: 1px 5px; font: 0.88em ui-monospace, Consolas, monospace; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin: 16px 0; }
+  .step { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .num { flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; }
+  ol, ul { padding-left: 22px; margin: 8px 0; }
+  li { margin: 5px 0; }
+  .note { border-left: 4px solid var(--warn); background: var(--warn-bg); padding: 8px 12px; border-radius: 0 6px 6px 0; margin: 10px 0; }
+  .expect { border-left: 4px solid var(--ok); background: var(--ok-bg); padding: 8px 12px; border-radius: 0 6px 6px 0; margin: 10px 0; }
+  .btn { display: inline-block; background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 6px; padding: 8px 14px; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .done-row { margin-top: 12px; color: var(--muted); font-size: 0.93rem; }
+  .done-row input { transform: scale(1.2); margin-right: 8px; }
+  section.done { opacity: 0.62; }
+  input[type=text], input[type=number] { font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); width: 170px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 0.85rem; font-weight: 600; background: var(--code); }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+  .tile { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .tile b { display: block; font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+  .meter { position: relative; height: 22px; background: var(--code); border-radius: 5px; margin: 6px 0 2px; overflow: hidden; }
+  .meter .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); width: 0; transition: width 0.25s; }
+  .meter .fill.hot { background: var(--ok); }
+  .meter .mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--bad); }
+  .meter .mark.exit { background: var(--warn); }
+  .small { font-size: 0.85rem; color: var(--muted); }
+  #msg { min-height: 1.4em; }
+  #xwrap { max-height: 260px; overflow: auto; }
+  .top { position: fixed; right: 16px; bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+</style>
+</head>
+<body>
+<main>
+<h1>OFT bench bring-up</h1>
+<p class="lede">First hardware test of the single-pilot gate timer: a Seeed XIAO ESP32-C5 (the Node) and a Waveshare
+RP2350-POE-ETH (the Timer). Work top to bottom from a Windows PC in Chrome or Edge. Nothing here has run on real
+hardware yet, so expect to find problems; each step says what to note down if it fails.</p>
+
+<section id="timer-panel">
+  <div class="step"><h2>Timer panel</h2><span id="t-state" class="pill">no Timer selected</span></div>
+  <div class="row">
+    <button class="btn" id="find">Find Timer on the network</button>
+    <input type="text" id="ip" placeholder="or type its IP" aria-label="Timer IP address">
+    <button class="btn ghost" id="use">Use</button>
+    <a id="raw" class="small" target="_blank" rel="noopener" hidden>open raw /info</a>
+    <a id="own" class="small" target="_blank" rel="noopener" hidden>open the Timer's own page</a>
+    <button class="btn ghost" id="bootsel" hidden>Update Timer firmware…</button>
+  </div>
+  <div id="msg" class="small"></div>
+  <div id="live" hidden>
+    <div class="grid">
+      <div class="tile"><b>Node</b><span id="s-node">-</span></div>
+      <div class="tile"><b>Clock</b><span id="s-clock">-</span></div>
+      <div class="tile"><b>Sample rate</b><span id="s-rate">-</span></div>
+      <div class="tile"><b>Dropped / uptime</b><span id="s-drop">-</span></div>
+    </div>
+    <div><b>Signal, seat 0</b> <span id="s-sig" class="small"></span>
+      <div class="meter"><div class="fill" id="m-fill"></div><div class="mark exit" id="m-exit"></div><div class="mark" id="m-enter"></div></div>
+      <div class="small" style="display:flex;justify-content:space-between"><span id="m-lo"></span><span id="m-hi"></span></div>
+      <div class="small">Bar: signal above the noise floor. Orange line: exit level. Red line: enter level. The bar turns green during a crossing.</div>
+    </div>
+    <div style="margin-top:12px"><b>Signal trace, last 15 s</b> <span id="c-info" class="small"></span>
+      <canvas id="chart" style="display:block;width:100%;height:200px;background:var(--code);border-radius:6px;margin-top:6px"></canvas>
+      <div class="small">Line: signal (the Timer's own record, so nothing is missed between screen updates). Red: enter level. Orange: exit level. Grey: noise floor. Green band: a crossing, with its timestamp as the dark line.</div>
+    </div>
+    <div class="row">
+      <label for="freq"><b>Seat 0 frequency</b></label>
+      <input type="number" id="freq" min="5000" max="6200" step="1" style="width:110px"> MHz
+      <button class="btn ghost" id="setfreq">Set</button>
+      <span class="small">Raceband: R1 5658, R2 5695, R3 5732, R4 5769, R5 5806, R6 5843, R7 5880, R8 5917</span>
+    </div>
+    <div class="row">
+      <label for="thmode"><b>Enter / exit levels</b></label>
+      <select id="thmode" style="font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)">
+        <option value="auto">Auto: above the noise floor</option>
+        <option value="manual">Manual: fixed levels</option>
+      </select>
+      <label><span id="th-a-label">Enter, dB above floor</span> <input type="number" id="th-a" step="0.5" style="width:90px"></label>
+      <label><span id="th-b-label">Exit, dB below enter</span> <input type="number" id="th-b" step="0.5" style="width:90px"></label>
+      <label id="th-h-wrap" hidden>Hold-off, ms <input type="number" id="th-h" min="0" max="1000" step="10" style="width:80px"></label>
+      <button class="btn ghost" id="setth">Set</button>
+    </div>
+    <div class="small">Less sensitive: raise the enter level. Auto follows the noise floor (default 15 dB above it, exit 5 dB lower). Manual uses the same dB scale as the signal readout above, e.g. enter -60, exit -65. Hold-off: how long the signal must stay below the exit level before a crossing ends, so a pass with dips in it stays one crossing (default 100 ms; needs Timer firmware from today). Passes closer than 2 s apart are always ignored.</div>
+    <h3>Crossings <button class="btn ghost" id="clear" style="padding:2px 10px;font-size:0.85rem">clear list</button></h3>
+    <div class="scroll" id="xwrap"><table><thead><tr><th>#</th><th>Time on Timer clock</th><th>Since previous</th><th>Peak</th><th>SNR</th><th>Flags</th></tr></thead>
+    <tbody id="xings"><tr><td colspan="6" class="small">none yet</td></tr></tbody></table></div>
+  </div>
+</section>
+
+<section data-step="0">
+  <div class="step"><span class="num">0</span><h2>Before you start</h2></div>
+  <ul>
+    <li>Use <b>Chrome or Edge</b>. The flasher talks to the board through Web Serial, which Firefox on Windows does not have by default.</li>
+    <li>This page is served with a self-signed certificate. You already clicked through the warning; the browser will show "Not secure" in the address bar, which is expected.</li>
+    <li>You need: both boards, a USB-C <b>data</b> cable, the 5.8 GHz antenna, an Ethernet cable, and a video transmitter (a quad is fine) on a known channel.</li>
+    <li>The Timer needs to be on the same network as the server this page comes from, so it can be found and shown above.</li>
+  </ul>
+  <div class="links">
+    <a class="btn ghost" href="/files/oft-b1-wiring.pdf" target="_blank" rel="noopener">Wiring sheet (PDF)</a>
+  </div>
+  <label class="done-row"><input type="checkbox">Done</label>
+</section>
+
+<section data-step="1">
+  <div class="step"><span class="num">1</span><h2>Node on its own: flash and look at the signal</h2></div>
+  <p>No soldering needed. This proves the XIAO, its radio and the antenna before anything is wired.</p>
+  <ol>
+    <li>Plug the antenna onto the XIAO's u.FL socket. It presses straight down and clicks.</li>
+    <li>Plug the XIAO into the PC with USB-C. Windows should add a COM port by itself ("USB JTAG/serial debug unit").</li>
+    <li>Open the Node page (button below, new tab). Click <b>Flash device</b>, choose the preset <b>Seeed Studio XIAO C5</b>, pick the board's port, and flash. The version shown should start with <code>oft-</code>.</li>
+    <li>Click <b>Connect</b> (top right) and pick the same port. You should see a live spectrum.</li>
+    <li>Power the video transmitter a metre or two away. A peak should appear on its channel and drop when you unplug it.</li>
+  </ol>
+  <div class="links"><a class="btn" href="/node/" target="_blank" rel="noopener">Open the Node page</a></div>
+  <div class="expect"><b>Good:</b> flashing ends with "Done", the spectrum updates, and the transmitter's peak is clearly above the floor.</div>
+  <div class="note"><b>If the board is not offered or flashing stalls:</b> put it in download mode by hand. Hold the <b>B</b> (boot) button, tap <b>R</b> (reset), release B, then flash again. Brand-new C5 boards can hang after a USB reset until our firmware is on them. If it still fails, note the exact message in the dialog.</div>
+  <div class="note">Do not flash from the public widscan58 page. It installs the upstream firmware, which cannot talk to a Timer.</div>
+  <label class="done-row"><input type="checkbox">Done</label>
+</section>
+
+<section data-step="2">
+  <div class="step"><span class="num">2</span><h2>Timer on its own: flash and find it</h2></div>
+  <p>Also no soldering. This proves the RP2350 board and its Ethernet.</p>
+  <ol>
+    <li>Download the firmware file (button below).</li>
+    <li>Hold the <b>BOOT</b> button on the RP2350 board, plug in its USB-C, then release. A drive named <b>RP2350</b> appears in Explorer.</li>
+    <li>Copy <code>oft-timer.uf2</code> onto that drive. The drive disappears by itself; that is the board restarting into the firmware.</li>
+    <li>Leave the USB-C cable plugged in. Next time, the <b>Update Timer firmware…</b> button in the Timer panel puts the board into this mode without the BOOT button.</li>
+    <li>Plug in Ethernet. Power can stay on USB-C for now, or come from a PoE port once the PoE module is fitted.</li>
+    <li>Wait about ten seconds, then click <b>Find Timer on the network</b> at the top of this page.</li>
+  </ol>
+  <div class="links"><a class="btn" href="/files/oft-timer.uf2" download>Download oft-timer.uf2</a></div>
+  <div class="expect"><b>Good:</b> a Timer named <code>oft-xxxx</code> with host <code>rp2350</code> is found, and the panel shows <b>Node: not connected</b>. That is correct, nothing is wired yet.</div>
+  <div class="note"><b>If nothing is found:</b> check the link lights on the Ethernet jack, then look in your router's DHCP list for a device whose MAC address starts with <code>02:4F:46:54</code> and type its IP into the panel. If it has no lease at all, the Ethernet chip is probably not starting; that is the least-tested part of the firmware, so tell me and we will look at it together.</div>
+  <label class="done-row"><input type="checkbox">Done</label>
+</section>
+
+<section data-step="3">
+  <div class="step"><span class="num">3</span><h2>Solder</h2></div>
+  <p>Only once steps 1 and 2 pass, so a dead board can still go back unmodified.</p>
+  <ol>
+    <li><b>XIAO back pads first</b>, before its headers. Solder a thin flexible wire (30 AWG or similar, 5 to 8 cm) to <b>MTMS</b>. If you want them for later, also <b>EN</b> and <b>BOOT</b>. Page 2 of the wiring sheet shows which pad is which.</li>
+    <li>Run those wires out sideways, add a dab of hot glue or Kapton over the joints, and end each in a single male pin.</li>
+    <li><b>XIAO headers:</b> seat the header strips in the breadboard, drop the board on, solder.</li>
+    <li><b>RP2350 headers:</b> check how the PoE module mounts before choosing which way the pins face, then solder the same way.</li>
+  </ol>
+  <div class="note">Park unused EN and BOOT wires each in their own empty breadboard row. EN touching ground resets the Node; BOOT held low at power-up puts it in download mode.</div>
+  <p>Afterwards, repeat the quick checks: the XIAO still connects on the Node page, and the Timer is still found.</p>
+  <label class="done-row"><input type="checkbox">Done</label>
+</section>
+
+<section data-step="4">
+  <div class="step"><span class="num">4</span><h2>Four wires: the Node link</h2></div>
+  <p>With everything unpowered, wire these on the breadboard. Go by the labels printed on the boards.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Wire</th><th>RP2350 board</th><th>XIAO</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Red</td><td><b>Vsys</b> (pin 31)</td><td><b>5V</b></td><td>Not Vbus</td></tr>
+      <tr><td>Black</td><td><b>G</b> (pin 8)</td><td><b>GND</b></td><td></td></tr>
+      <tr><td>Orange</td><td><b>4</b> (pin 6)</td><td><b>D7</b></td><td>Timer sends, Node receives</td></tr>
+      <tr><td>Blue</td><td><b>5</b> (pin 7)</td><td><b>D6</b></td><td>Node sends, Timer receives</td></tr>
+    </tbody>
+  </table></div>
+  <ol>
+    <li><b>Unplug the XIAO's USB cable.</b> The Node now gets power through the red wire.</li>
+    <li>Power the RP2350 board (USB-C or PoE) with Ethernet connected.</li>
+    <li>Watch the Timer panel at the top. Within a few seconds it should show <b>Node: connected</b>, a sample rate near 1000 Hz, and a signal value.</li>
+    <li>Set <b>Seat 0 frequency</b> to your transmitter's channel and click Set.</li>
+    <li>Power the transmitter and move it toward the antenna and away again, taking a second or so. The bar should rise past the red line and a crossing should appear in the list.</li>
+  </ol>
+  <div class="expect"><b>Good:</b> Node connected, clock "ping" and synced, signal rises with the transmitter, one crossing per pass.</div>
+  <div class="note"><b>Never have the XIAO's USB and PoE connected at the same time</b> while the red wire is in. The XIAO's 5V pin is wired straight to its USB socket, so the two supplies would be joined. For the same reason, do not leave one board powered and the other not.</div>
+  <div class="note"><b>If the Node stays "not connected":</b> the usual cause is the two data wires swapped, so swap orange and blue at one end and try again. Next check that the XIAO has power (its LED) and shares ground. If it connects but the signal never moves, check the frequency and the antenna.</div>
+  <label class="done-row"><input type="checkbox">Done</label>
+</section>
+
+<section data-step="5">
+  <div class="step"><span class="num">5</span><h2>Fifth wire: SYNC</h2></div>
+  <p>SYNC is what gives the Timer precise lap times. Without it the clock is fitted from pings, which works but is coarser.</p>
+  <ol>
+    <li>Power off. Add the purple wire from RP2350 <b>6</b> (pin 9) to the XIAO's <b>MTMS</b> pad wire.</li>
+    <li>Power on and watch <b>Clock</b> in the panel.</li>
+  </ol>
+  <div class="expect"><b>Good:</b> Clock changes from "ping" to <b>sync</b>, and the error figure settles to a small number of microseconds.</div>
+  <div class="note"><b>If it stays on "ping":</b> the Node is not seeing the pulses. Check the joint on the MTMS pad and that the wire is on pin 9, not a neighbour. Note what the panel shows.</div>
+  <label class="done-row"><input type="checkbox">Done</label>
+</section>
+
+<section data-step="6">
+  <div class="step"><span class="num">6</span><h2>A few timed passes</h2></div>
+  <ol>
+    <li>Click <b>clear list</b>, then make ten passes at a steady pace, at least three seconds apart (closer passes are ignored on purpose: the minimum lap time is 2 s).</li>
+    <li>Check you get exactly ten crossings, and that "Since previous" looks like your pace.</li>
+    <li>Try one slow pass and one fast pass, and one at longer range.</li>
+  </ol>
+  <p>Worth writing down for me afterwards: missed or doubled passes, any flags in the list (<code>clipped</code>, <code>low_snr</code>, <code>truncated</code>), the floor and peak values, and the dropped count.</p>
+  <div class="note">Known rough edge: the very first crossing after power-up can be placed up to about 0.1 s late while the noise floor settles. Ignore the first pass when judging timing.</div>
+  <label class="done-row"><input type="checkbox">Done</label>
+</section>
+
+<section>
+  <h2>Not part of this test</h2>
+  <ul>
+    <li><b>Reset and boot wires</b> (RP2350 7 and 8 to EN and BOOT). The Timer cannot flash the Node yet, so they do nothing useful today.</li>
+    <li><b>Finding the Timer automatically.</b> The RP2350 firmware does not advertise itself yet; the Find button scans the network instead.</li>
+    <li><b>Settings surviving a power cycle.</b> The frequency goes back to 5800 MHz after every restart of the Timer.</li>
+  </ul>
+</section>
+<a class="btn top" href="#timer-panel">Timer panel ↑</a>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* private window */ } },
+  };
+
+  // Step checkboxes.
+  for (const sec of document.querySelectorAll("section[data-step]")) {
+    const box = sec.querySelector(".done-row input");
+    const key = "oft-bench-step-" + sec.dataset.step;
+    box.checked = store.get(key) === "1";
+    sec.classList.toggle("done", box.checked);
+    box.addEventListener("change", () => { store.set(key, box.checked ? "1" : "0"); sec.classList.toggle("done", box.checked); });
+  }
+
+  let ip = null, since = 0, bootId = null, prevMid = null, fails = 0, freqTouched = false, thTouched = false, last = null;
+  let tick = 0, nextT = null, clockOff = null, trace = [], marks = [];
+  const WINDOW_US = 15e6;
+  const db = (v) => (v == null ? "-" : (v / 10).toFixed(1) + " dB");
+  const msg = (t) => { $("msg").textContent = t; };
+  const state = (text, cls) => { const e = $("t-state"); e.textContent = text; e.className = "pill " + (cls || ""); };
+  const api = (path, opts) => fetch(`/api/timer/${ip}/${path}`, opts).then(async (r) => {
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    return body;
+  });
+
+  function select(addr) {
+    ip = addr.trim();
+    if (!ip) return;
+    store.set("oft-bench-ip", ip);
+    $("ip").value = ip;
+    since = 0; bootId = null; prevMid = null; fails = 0; freqTouched = false; thTouched = false;
+    nextT = null; clockOff = null; trace = []; marks = [];
+    $("xings").innerHTML = '<tr><td colspan="6" class="small">none yet</td></tr>';
+    $("raw").href = `/api/timer/${ip}/info`; $("raw").hidden = false; $("bootsel").hidden = false; $("own").href = `http://${ip}:7270/`; $("own").hidden = false;
+    $("live").hidden = false;
+    state("connecting to " + ip, "warn");
+    loadConfig();
+  }
+
+  async function loadConfig() {
+    try {
+      const c = await api("config");
+      const s0 = (c.seats || []).find((s) => s.seat === 0);
+      if (s0 && !freqTouched) $("freq").value = s0.freq_mhz;
+      if (c.threshold && !thTouched) showThreshold(c.threshold);
+      $("th-h-wrap").hidden = c.exit_hold_ms == null;
+      if (c.exit_hold_ms != null && !thTouched) $("th-h").value = c.exit_hold_ms;
+    } catch { /* shown by the poll */ }
+  }
+
+  function thLabels() {
+    const manual = $("thmode").value === "manual";
+    $("th-a-label").textContent = manual ? "Enter, dB" : "Enter, dB above floor";
+    $("th-b-label").textContent = manual ? "Exit, dB" : "Exit, dB below enter";
+  }
+  function showThreshold(t) {
+    $("thmode").value = t.mode === "manual" ? "manual" : "auto";
+    $("th-a").value = ((t.mode === "manual" ? t.enter : t.snr_enter) / 10).toFixed(1);
+    $("th-b").value = ((t.mode === "manual" ? t.exit : t.hysteresis) / 10).toFixed(1);
+    thLabels();
+  }
+  for (const id of ["th-a", "th-b", "th-h"]) $(id).addEventListener("input", () => { thTouched = true; });
+  $("thmode").addEventListener("change", () => {
+    thTouched = true;
+    thLabels();
+    // Sensible starting values when switching mode.
+    if ($("thmode").value === "manual" && last && last.enter != null) { $("th-a").value = (last.enter / 10).toFixed(1); $("th-b").value = (last.exit / 10).toFixed(1); }
+    else if ($("thmode").value === "auto") { $("th-a").value = "15.0"; $("th-b").value = "5.0"; }
+  });
+  $("setth").addEventListener("click", async () => {
+    const a = Math.round(Number($("th-a").value) * 10), b = Math.round(Number($("th-b").value) * 10);
+    const manual = $("thmode").value === "manual";
+    if (!ip || !Number.isFinite(a) || !Number.isFinite(b) || $("th-a").value === "" || $("th-b").value === "") return msg("Fill in both levels.");
+    if (manual && b >= a) return msg("Exit must be lower than enter.");
+    if (!manual && (a <= 0 || b <= 0 || b >= a)) return msg("Auto: enter must be above 0, and the exit gap between 0 and the enter value.");
+    try {
+      const c = await api("config");
+      c.threshold = manual ? { mode: "manual", enter: a, exit: b } : { mode: "auto", snr_enter: a, hysteresis: b };
+      if (!$("th-h-wrap").hidden && $("th-h").value !== "") c.exit_hold_ms = Math.max(0, Math.min(1000, Math.round(Number($("th-h").value))));
+      const back = await api("config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
+      thTouched = false;
+      if (back.threshold) showThreshold(back.threshold);
+      if (back.exit_hold_ms != null) $("th-h").value = back.exit_hold_ms;
+      msg("Levels set. They reset to the defaults when the Timer restarts.");
+    } catch (e) { msg("Could not set the levels: " + e.message); }
+  });
+
+  $("find").addEventListener("click", async () => {
+    $("find").disabled = true;
+    msg("Scanning the network for Timers, about five seconds…");
+    try {
+      const r = await (await fetch("/api/find")).json();
+      if (!r.timers.length) msg(`No Timer answered on ${r.network}. See the note under step 2.`);
+      else {
+        msg(`Found on ${r.network}: ` + r.timers.map((t) => `${t.id} (${t.host}) at ${t.ip}`).join(", ") + (r.timers.length > 1 ? ". Using the first; type another IP to change." : "."));
+        select(r.timers[0].ip);
+      }
+    } catch (e) { msg("Scan failed: " + e.message); }
+    $("find").disabled = false;
+  });
+  $("bootsel").addEventListener("click", async () => {
+    if (!ip || !confirm("Restart the Timer into USB update mode?\n\nIts USB-C must be plugged into this PC. It stops timing and appears as a drive named RP2350; copy oft-timer.uf2 onto it and it restarts by itself.")) return;
+    try {
+      const r = await fetch(`/api/bootsel/${ip}`, { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      msg("The Timer is restarting into update mode. Copy oft-timer.uf2 (step 2 has the download) onto the RP2350 drive.");
+    } catch (e) { msg("Could not start update mode: " + e.message); }
+  });
+  $("use").addEventListener("click", () => select($("ip").value));
+  $("ip").addEventListener("keydown", (e) => { if (e.key === "Enter") select($("ip").value); });
+  $("freq").addEventListener("input", () => { freqTouched = true; });
+  $("clear").addEventListener("click", () => { $("xings").innerHTML = '<tr><td colspan="6" class="small">none yet</td></tr>'; prevMid = null; });
+
+  $("setfreq").addEventListener("click", async () => {
+    const f = Number($("freq").value);
+    if (!ip || !(f >= 5000 && f <= 6200)) return msg("Frequency must be 5000 to 6200 MHz.");
+    try {
+      const c = await api("config");
+      const s0 = (c.seats || []).find((s) => s.seat === 0);
+      if (s0) { s0.freq_mhz = f; s0.enabled = true; } else c.seats = [{ seat: 0, freq_mhz: f, enabled: true }, ...(c.seats || [])];
+      const back = await api("config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
+      const got = (back.seats || []).find((s) => s.seat === 0);
+      freqTouched = false;
+      msg(`Seat 0 is now on ${got ? got.freq_mhz : f} MHz. The signal view restarts.`);
+    } catch (e) { msg("Could not set the frequency: " + e.message); }
+  });
+
+  function showStatus(st) {
+    $("s-node").innerHTML = st.node_connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>';
+    const err = st.clock_err_us == null ? "" : `, error ${st.clock_err_us.toFixed(1)} µs`;
+    $("s-clock").textContent = st.clock_synced ? `${st.clock_source}${err}` : `${st.clock_source || "none"}, not synced yet`;
+    const s = (st.seats || []).find((x) => x.seat === 0) || (st.seats || [])[0];
+    $("s-rate").textContent = s ? `${s.rate_hz} Hz` : "no seat";
+    const temp = st.temp_c == null ? "" : `, Node ${st.temp_c.toFixed(0)} °C`;
+    $("s-drop").textContent = `${st.dropped} / ${st.uptime_s} s${temp}`;
+    last = s || null;
+    if (!s || s.rssi == null || s.floor == null) {
+      $("s-sig").textContent = "no samples yet";
+      $("m-fill").style.width = "0";
+      return;
+    }
+    // Scale follows the levels, not the live signal: from 5 dB below the floor (or the exit
+    // level, if that is lower) to 15 dB above the enter level, and at least 45 dB wide.
+    const lo = Math.min(s.floor, s.exit) - 50;
+    const hi = Math.max(s.enter + 150, lo + 450);
+    const span = hi - lo;
+    $("m-lo").textContent = db(lo); $("m-hi").textContent = db(hi);
+    const pct = (v) => Math.max(0, Math.min(100, ((v - lo) / span) * 100)) + "%";
+    $("m-fill").style.width = pct(s.rssi);
+    $("m-fill").classList.toggle("hot", !!s.crossing);
+    $("m-enter").style.left = pct(s.enter);
+    $("m-exit").style.left = pct(s.exit);
+    $("s-sig").textContent = `now ${db(s.rssi)}, floor ${db(s.floor)}, ${((s.rssi - s.floor) / 10).toFixed(1)} dB above floor; enter ${db(s.enter)}, exit ${db(s.exit)}`;
+  }
+
+  function addCrossings(list) {
+    const body = $("xings");
+    for (const c of list) {
+      if (body.querySelector("td[colspan]")) body.innerHTML = "";
+      const tr = document.createElement("tr");
+      const gap = prevMid == null ? "-" : ((c.t_mid - prevMid) / 1e6).toFixed(3) + " s";
+      prevMid = c.t_mid;
+      marks.push(c);
+      if (marks.length > 40) marks.shift();
+      for (const v of [c.seq, (c.t_mid / 1e6).toFixed(3) + " s", gap, db(c.peak), db(c.snr), (c.flags || []).join(", ") || "-"]) {
+        const td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+      }
+      body.prepend(tr);
+      since = Math.max(since, c.seq);
+    }
+  }
+
+  const timerNow = () => (clockOff == null ? null : clockOff + performance.now() * 1000);
+
+  // The Timer keeps its own signal record; fetch what is new since the last request.
+  async function pollSamples() {
+    const now = timerNow();
+    if (now == null) return;
+    if (nextT == null || nextT < now - 2 * WINDOW_US || nextT > now + 5e6) nextT = Math.max(0, now - WINDOW_US);
+    const r = await fetch(`/api/timer/${ip}/samples?seat=0&from=${Math.floor(nextT)}&to=${Math.floor(now + 60e6)}`);
+    if (!r.ok) return; // 404: nothing recorded in that window yet
+    const sm = await r.json();
+    if (!sm.p || !sm.p.length) return;
+    for (let k = 0; k < sm.p.length; k++) trace.push([sm.t0 + k * sm.dt_us, sm.p[k]]);
+    nextT = sm.t0 + sm.p.length * sm.dt_us;
+    const cut = now - WINDOW_US - 1e6;
+    let drop = 0;
+    while (drop < trace.length && trace[drop][0] < cut) drop++;
+    if (drop) trace.splice(0, drop);
+  }
+
+  function draw() {
+    requestAnimationFrame(draw);
+    const cv = $("chart");
+    if (!ip || $("live").hidden || document.hidden || !cv.clientWidth) return;
+    const dpr = window.devicePixelRatio || 1, w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const g = cv.getContext("2d"), css = getComputedStyle(document.documentElement);
+    const col = (n) => css.getPropertyValue(n).trim();
+    g.clearRect(0, 0, w, h);
+    const now = timerNow();
+    if (now == null || !last || last.floor == null) return;
+    const t0 = now - WINDOW_US;
+    let peak = -Infinity;
+    for (const [t, p] of trace) if (t >= t0 && p > peak) peak = p;
+    // Same rule as the bar, stretched upward if a visible peak would be cut off.
+    const lo = Math.min(last.floor, last.exit) - 50;
+    const hi = Math.max(last.enter + 150, lo + 450, peak + 30);
+    const x = (t) => ((t - t0) / WINDOW_US) * w, y = (p) => h - ((p - lo) / (hi - lo)) * h;
+    g.globalAlpha = 0.3; g.fillStyle = col("--ok");
+    for (const c of marks) if (c.t_exit >= t0) g.fillRect(x(c.t_enter), 0, Math.max(dpr, x(c.t_exit) - x(c.t_enter)), h);
+    g.globalAlpha = 1;
+    for (const c of marks) if (c.t_mid >= t0) { g.fillStyle = col("--ok"); g.fillRect(x(c.t_mid) - dpr, 0, 2 * dpr, h); }
+    const line = (p, color, dash) => { g.strokeStyle = color; g.lineWidth = dpr; g.setLineDash(dash); g.beginPath(); g.moveTo(0, y(p)); g.lineTo(w, y(p)); g.stroke(); g.setLineDash([]); };
+    line(last.floor, col("--muted"), [4 * dpr, 4 * dpr]);
+    line(last.exit, col("--warn"), []);
+    line(last.enter, col("--bad"), []);
+    g.strokeStyle = col("--accent"); g.lineWidth = 1.5 * dpr; g.beginPath();
+    let started = false;
+    for (const [t, p] of trace) { if (t < t0) continue; if (started) g.lineTo(x(t), y(p)); else { g.moveTo(x(t), y(p)); started = true; } }
+    g.stroke();
+    g.fillStyle = col("--muted"); g.font = `${11 * dpr}px system-ui, sans-serif`;
+    g.fillText(db(hi), 4 * dpr, 12 * dpr); g.fillText(db(lo), 4 * dpr, h - 4 * dpr);
+    $("c-info").textContent = peak > -Infinity ? `highest in view ${db(peak)} (${((peak - last.floor) / 10).toFixed(1)} dB above floor)` : "waiting for samples";
+  }
+
+  // One request at a time, so the Timer never sees more than one connection from this page.
+  async function poll() {
+    if (ip && !document.hidden) {
+      if (tick++ % 4 === 0) {
+        try {
+          const st = await api("status");
+          fails = 0;
+          clockOff = st.time_us - performance.now() * 1000;
+          state(`Timer at ${ip}`, "ok");
+          showStatus(st);
+          const x = await api(`crossings?since=${since}`);
+          if (bootId && x.boot_id !== bootId) {
+            since = 0; prevMid = null; trace = []; marks = []; nextT = null; freqTouched = false; thTouched = false;
+            msg("The Timer restarted; settings are back to defaults."); loadConfig();
+          } else addCrossings(x.crossings || []);
+          bootId = x.boot_id;
+        } catch (e) {
+          if (++fails >= 2) { state(`Timer at ${ip} is not answering`, "bad"); $("s-node").textContent = "-"; }
+        }
+      }
+      try { await pollSamples(); } catch { /* next round */ }
+    }
+    setTimeout(poll, 200);
+  }
+
+  const saved = store.get("oft-bench-ip");
+  if (saved) select(saved);
+  poll();
+  draw();
+})();
+</script>
+</body>
+</html>
