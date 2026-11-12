@@ -16,218 +16,430 @@
     --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5b6570; --line: #d5dbe1;
     --accent: #1f4e8c; --accent-ink: #ffffff; --ok: #1a7f4b; --ok-bg: #e3f4ea;
     --warn: #9a5b00; --warn-bg: #fdf1dc; --bad: #b3261e; --bad-bg: #fbe6e4; --code: #eef1f4;
+    --shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #14171b; --panel: #1c2026; --ink: #e6e9ed; --muted: #9aa5b1; --line: #323a44;
       --accent: #6ea8ef; --accent-ink: #0d1117; --ok: #5fd08f; --ok-bg: #173224;
       --warn: #f0b860; --warn-bg: #3a2c12; --bad: #ff8f85; --bad-bg: #3d1c19; --code: #262c34;
+      --shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 16px 16px 60px; }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 4px; }
-  h1 { font-size: 1.4rem; margin: 0; }
-  h2 { font-size: 1.02rem; margin: 0 0 8px; }
+  [hidden] { display: none !important; }
+
+  /* ---- top bar and navigation */
+  .top { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1020px; margin: 0 auto; padding: 10px 16px 0; }
+  .ident { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  h1 { font-size: 1.25rem; margin: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+  nav { display: flex; gap: 2px; margin-top: 8px; overflow-x: auto; }
+  nav a { padding: 8px 14px; color: var(--muted); text-decoration: none; font-weight: 600; border-bottom: 3px solid transparent; white-space: nowrap; border-radius: 6px 6px 0 0; }
+  nav a:hover { color: var(--ink); background: var(--code); }
+  nav a.on { color: var(--accent); border-bottom-color: var(--accent); }
+  nav a .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); margin-left: 6px; vertical-align: middle; }
+
+  main { max-width: 1020px; margin: 0 auto; padding: 4px 16px 80px; }
+  .page > h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 22px 0 -4px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+  section > h3 { font-size: 1.02rem; margin: 0 0 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  section > h3 .spacer { flex: 1; }
   .small { font-size: 0.85rem; color: var(--muted); }
-  .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 0.82rem; font-weight: 600; background: var(--code); }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 0.82rem; font-weight: 600; background: var(--code); white-space: nowrap; }
   .pill.ok { background: var(--ok-bg); color: var(--ok); }
   .pill.bad { background: var(--bad-bg); color: var(--bad); }
   .pill.warn { background: var(--warn-bg); color: var(--warn); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
   .tile { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0; }
-  .tile b { display: block; font-size: 0.75rem; color: var(--muted); font-weight: 600; }
+  .tile b { display: flex; align-items: center; gap: 4px; font-size: 0.75rem; color: var(--muted); font-weight: 600; }
   .tile span { overflow-wrap: anywhere; }
-  [hidden] { display: none !important; }
-  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
-  .btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 6px; padding: 7px 13px; font: inherit; font-weight: 600; cursor: pointer; }
-  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .tile.alert { border-color: var(--bad); background: var(--bad-bg); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin: 10px 0; }
+  .row.end { justify-content: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 3px; font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+  .field > span { display: flex; align-items: center; gap: 4px; }
+  .btn { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); border-radius: 6px; padding: 7px 13px; font: inherit; font-weight: 600; cursor: pointer; }
+  .btn.ghost { background: transparent; color: var(--accent); }
+  .btn.danger { background: var(--bad); border-color: var(--bad); color: var(--panel); }
+  .btn.sm { padding: 2px 10px; font-size: 0.82rem; }
   .btn:disabled { opacity: 0.5; cursor: default; }
-  input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
-  input[type=number] { width: 92px; }
-  canvas { display: block; width: 100%; height: 220px; background: var(--code); border-radius: 6px; }
+  input, select { font: inherit; font-weight: 400; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+  input[type=number] { width: 96px; }
+  input[type=file] { max-width: 100%; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  canvas { display: block; width: 100%; height: 240px; background: var(--code); border-radius: 6px; }
   table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
   th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th { color: var(--muted); font-weight: 600; }
-  .scroll { overflow: auto; max-height: 300px; }
-  #msg { min-height: 1.3em; }
-  .tile.alert { border-color: var(--bad); background: var(--bad-bg); }
+  .scroll { overflow: auto; max-height: 320px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 0.82rem; color: var(--muted); }
+  .legend i { display: inline-block; width: 16px; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 5px; }
+  .legend i.band { height: 10px; border: 0; opacity: 0.45; }
+  .facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 0.92rem; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; overflow-wrap: anywhere; }
+  progress { width: 100%; height: 10px; margin: 8px 0 2px; }
+  .state { margin-top: 6px; }
+  .state .pill { white-space: normal; border-radius: 8px; padding: 4px 10px; }
+
+  /* ---- sticky action bar on Setup */
+  .actions { position: sticky; bottom: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; box-shadow: var(--shadow); }
+  .actions .spacer { flex: 1; }
+
+  /* ---- help tips */
+  .tip { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; flex: none; border-radius: 50%; border: 1px solid var(--line); background: var(--code); color: var(--muted); font: 600 11px/1 system-ui, sans-serif; cursor: help; padding: 0; }
+  .tip:hover, .tip:focus { color: var(--accent); border-color: var(--accent); }
+  #tipbox { position: fixed; z-index: 30; max-width: min(300px, calc(100vw - 16px)); background: var(--ink); color: var(--bg); font-size: 0.85rem; line-height: 1.4; padding: 8px 10px; border-radius: 8px; box-shadow: var(--shadow); pointer-events: none; }
+
+  /* ---- toasts and the dialog */
+  #toasts { position: fixed; right: 14px; top: 100px; z-index: 20; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; max-width: min(420px, calc(100vw - 28px)); }
+  .toast { background: var(--panel); border: 1px solid var(--line); border-left: 5px solid var(--accent); border-radius: 8px; padding: 9px 12px; box-shadow: var(--shadow); display: flex; gap: 10px; align-items: flex-start; }
+  .toast.ok { border-left-color: var(--ok); }
+  .toast.bad { border-left-color: var(--bad); }
+  .toast button { border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; padding: 0 2px; }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); padding: 0; width: min(460px, calc(100vw - 32px)); box-shadow: var(--shadow); }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+  dialog form { padding: 18px 20px 16px; margin: 0; }
+  dialog h3 { margin: 0 0 8px; font-size: 1.1rem; }
+  dialog p { margin: 0 0 8px; white-space: pre-line; }
+  dialog .row { margin: 16px 0 0; }
+
+  @media (max-width: 560px) {
+    .chips { margin-left: 0; width: 100%; }
+    nav a { padding: 8px 10px; }
+    canvas { height: 200px; }
+    main { padding: 4px 10px 80px; }
+    section { padding: 12px; }
+    th, td { padding: 5px 6px; }
+    #seat-table input[type=number] { width: 78px; }
+  }
 </style>
 </head>
 <body>
+<div class="top"><div class="bar">
+  <div class="ident">
+    <h1 id="title">OFT Timer</h1>
+    <span id="ident" class="small"></span>
+    <div class="chips">
+      <span id="conn" class="pill warn">connecting</span>
+      <span id="h-node" class="pill" hidden></span>
+      <span id="h-clock" class="pill" hidden></span>
+      <span id="h-loss" class="pill" hidden></span>
+    </div>
+  </div>
+  <nav id="nav">
+    <a href="#live" data-page="live">Live</a>
+    <a href="#setup" data-page="setup">Setup<span class="dot" id="nav-dirty" hidden title="Changes not applied"></span></a>
+    <a href="#network" data-page="network" id="nav-network" hidden>Network</a>
+    <a href="#firmware" data-page="firmware">Firmware</a>
+    <a href="#diagnostics" data-page="diagnostics">Diagnostics<span class="dot" id="nav-alert" hidden title="Link errors are being counted"></span></a>
+  </nav>
+</div></div>
+
 <main>
-<header>
-  <h1 id="title">OFT Timer</h1>
-  <span id="conn" class="pill warn">connecting</span>
-  <span id="ident" class="small"></span>
-</header>
-<div id="msg" class="small"></div>
+<!-- ================================================================ Live -->
+<div class="page" id="p-live">
+<section>
+  <h3>Signal <select id="seat" aria-label="Seat"></select> <span id="c-info" class="small"></span><span class="spacer"></span><button class="btn ghost sm" id="pause">Pause</button></h3>
+  <canvas id="chart"></canvas>
+  <div class="legend">
+    <span><i style="border-color:var(--accent)"></i>signal</span>
+    <span><i style="border-color:var(--bad)"></i>enter level</span>
+    <span><i style="border-color:var(--warn)"></i>exit level</span>
+    <span><i style="border-color:var(--muted);border-top-style:dashed"></i>noise floor</span>
+    <span><i class="band" style="background:var(--ok)"></i>crossing</span>
+    <button type="button" class="tip" data-tip="The last 15 seconds. A crossing starts when the signal rises above the enter level and ends when it has stayed below the exit level. The dark line in a crossing is its timestamp. Gaps in the line are samples that never arrived." aria-label="Help">?</button>
+  </div>
+  <div id="s-sig" class="small" style="margin-top:6px"></div>
+</section>
 
 <section>
-  <h2>Status</h2>
+  <h3>Health</h3>
   <div class="grid">
     <div class="tile"><b>Node</b><span id="s-node">-</span></div>
-    <div class="tile"><b>Clock</b><span id="s-clock">-</span></div>
-    <div class="tile"><b>Sample rate</b><span id="s-rate">-</span></div>
-    <div class="tile"><b>Uptime</b><span id="s-up">-</span></div>
+    <div class="tile"><b>Clock <button type="button" class="tip" data-tip="How the Node's clock is tied to the Timer's. Error is how far the two disagree; a few microseconds is normal." aria-label="Help">?</button></b><span id="s-clock">-</span></div>
+    <div class="tile"><b>Sample rate <button type="button" class="tip" data-tip="Signal readings per second for the seat shown in the chart. It drops as more seats share one Node." aria-label="Help">?</button></b><span id="s-rate">-</span></div>
     <div class="tile"><b>Node temperature</b><span id="s-temp">-</span></div>
     <div class="tile"><b>Timer temperature</b><span id="s-ttemp">-</span></div>
-    <div class="tile"><b>Clients</b><span id="s-clients">-</span></div>
+    <div class="tile"><b>Uptime</b><span id="s-up">-</span></div>
+    <div class="tile" id="s-clients-t"><b>Clients</b><span id="s-clients">-</span></div>
   </div>
 </section>
 
 <section>
-  <h2>Node link <span class="small">(counts since the Timer started; rate over the last 10 s)</span></h2>
-  <div class="grid">
-    <div class="tile" id="l-gap-t"><b>Samples missing</b><span id="l-gap">-</span></div>
-    <div class="tile" id="l-crc-t"><b>Damaged messages (checksum)</b><span id="l-crc">-</span></div>
-    <div class="tile" id="l-uart-t"><b>Serial receive errors</b><span id="l-uart">-</span></div>
-    <div class="tile" id="l-over-t"><b>Dropped by the Node before sending</b><span id="l-over">-</span></div>
-    <div class="tile"><b>Node hop errors</b><span id="l-hop">-</span></div>
-    <div class="tile"><b>Node gain setting</b><span id="l-gain">-</span></div>
-  </div>
-  <div class="small" style="margin-top:8px">Missing samples with damaged messages or serial errors point at the wiring. Missing samples with drops at the Node point at the Node's firmware. Missing samples with neither counted mean whole messages vanish cleanly, which needs a closer look.</div>
-</section>
-
-<section>
-  <h2>Signal <select id="seat" aria-label="Seat"></select> <span id="c-info" class="small"></span></h2>
-  <canvas id="chart"></canvas>
-  <div class="small" style="margin-top:6px">Last 15 s. Line: signal. Red: enter level. Orange: exit level. Grey dashes: noise floor. Green band: a crossing, dark line at its timestamp. Blank stretches are samples that never arrived.</div>
-  <div class="row">
-    <button class="btn ghost" id="pause">Pause</button>
-    <span id="s-sig" class="small"></span>
-  </div>
-</section>
-
-<section>
-  <h2>Settings <span class="small" id="persist-note">(not saved across a restart)</span></h2>
-  <div class="row">
-    <label>Seats <select id="nseats" aria-label="Number of seats"></select></label>
-    <span class="small" id="seat-list"></span>
-  </div>
-  <div class="row">
-    <label><span id="freq-label">Frequency, MHz</span> <input type="number" id="freq" min="5000" max="6200" step="1"></label>
-    <span class="small">Raceband: R1 5658, R2 5695, R3 5732, R4 5769, R5 5806, R6 5843, R7 5880, R8 5917</span>
-  </div>
-  <div class="row">
-    <select id="thmode" aria-label="Level mode">
-      <option value="auto">Auto: above the noise floor</option>
-      <option value="manual">Manual: fixed levels</option>
-    </select>
-    <label><span id="th-a-label">Enter, dB above floor</span> <input type="number" id="th-a" step="0.5"></label>
-    <label><span id="th-b-label">Exit, dB below enter</span> <input type="number" id="th-b" step="0.5"></label>
-  </div>
-  <div class="row">
-    <label id="hold-wrap">Exit hold-off, ms <input type="number" id="hold" min="0" max="1000" step="10"></label>
-    <label>Minimum lap, ms <input type="number" id="minlap" min="0" max="600000" step="100"></label>
-    <button class="btn" id="apply">Apply</button>
-    <button class="btn ghost" id="reload">Reload from Timer</button>
-  </div>
-  <div class="small">Levels, hold-off and minimum lap apply at once. Changing the frequency restarts detection. Levels use the same dB scale as the chart.</div>
-  <div class="row" id="persist" hidden>
-    <button class="btn" id="save-default">Save as power-on settings</button>
-    <button class="btn ghost" id="forget-default">Forget saved settings</button>
-    <span class="small" id="persist-state"></span>
-  </div>
-</section>
-
-<section id="net" hidden>
-  <h2>Network <span class="small">(takes effect when the Timer restarts)</span></h2>
-  <div class="small" id="net-now"></div>
-  <div class="row">
-    <select id="net-mode" aria-label="Address mode">
-      <option value="dhcp">Automatic (DHCP)</option>
-      <option value="static">Fixed address</option>
-    </select>
-    <label class="net-static">Address <input type="text" id="net-addr" placeholder="192.168.1.50" size="15"></label>
-    <label class="net-static">Mask <select id="net-prefix">
-      <option value="24">255.255.255.0 (/24)</option>
-      <option value="23">255.255.254.0 (/23)</option>
-      <option value="22">255.255.252.0 (/22)</option>
-      <option value="16">255.255.0.0 (/16)</option>
-    </select></label>
-    <label class="net-static">Gateway (optional) <input type="text" id="net-gw" placeholder="192.168.1.1" size="15"></label>
-  </div>
-  <div class="row">
-    <button class="btn" id="net-save">Save network settings</button>
-    <button class="btn ghost" id="restart">Restart the Timer</button>
-  </div>
-  <div class="small">If a fixed address makes the Timer unreachable: fit a jumper between header pins 12 (GP9) and 13 (GND), power it up, and it uses DHCP for that start.</div>
-</section>
-
-<section>
-  <h2>Crossings <button class="btn ghost" id="clear" style="padding:2px 10px;font-size:0.82rem">clear list</button></h2>
+  <h3>Crossings <span class="spacer"></span><button class="btn ghost sm" id="clear">Clear list</button></h3>
   <div class="scroll"><table>
     <thead><tr><th>#</th><th>Seat</th><th>Time</th><th>Since previous</th><th>Width</th><th>Peak</th><th>Above floor</th><th>Flags</th></tr></thead>
     <tbody id="xings"><tr><td colspan="8" class="small">none yet</td></tr></tbody>
   </table></div>
 </section>
+</div>
+
+<!-- ================================================================ Setup -->
+<div class="page" id="p-setup" hidden>
+<section>
+  <h3>Seats and channels <button type="button" class="tip" data-tip="One seat per pilot. Race software sees this list. One Node covers up to 8 seats by hopping between channels; channels within 40 MHz of each other share a hop, so neighbouring Raceband channels cost less speed than scattered ones." aria-label="Help">?</button></h3>
+  <div class="row">
+    <label class="field"><span>Number of seats</span><select id="nseats" aria-label="Number of seats"></select></label>
+  </div>
+  <div class="scroll" style="max-height:none"><table id="seat-table">
+    <thead><tr><th>Seat</th><th>Frequency, MHz</th><th>Quick pick</th><th>Samples now</th></tr></thead>
+    <tbody id="seat-rows"></tbody>
+  </table></div>
+</section>
 
 <section>
-  <h2>Firmware</h2>
-  <div id="fw" class="small">-</div>
+  <h3>Detection <button type="button" class="tip" data-tip="When a pass counts as a crossing. Levels are on the same dB scale as the Live chart, so set them while watching a pass." aria-label="Help">?</button></h3>
+  <div class="row" id="th-scope-row">
+    <label class="field"><span>Levels for <button type="button" class="tip" data-tip="Shared levels apply to every seat that has none of its own. Pick a seat to give it its own levels." aria-label="Help">?</button></span><select id="th-scope"></select></label>
+    <button class="btn ghost sm" id="th-unset" hidden style="align-self:flex-end">Use the shared levels for this seat</button>
+  </div>
+  <div class="row">
+    <label class="field"><span>Mode <button type="button" class="tip" data-tip="Auto follows the noise floor, so it adapts to the venue. Manual uses fixed levels, like RotorHazard's EnterAt and ExitAt." aria-label="Help">?</button></span>
+      <select id="thmode" aria-label="Level mode">
+        <option value="auto">Auto: above the noise floor</option>
+        <option value="manual">Manual: fixed levels</option>
+      </select></label>
+    <label class="field"><span><span id="th-a-label">Enter, dB above floor</span> <button type="button" class="tip" data-tip="The signal must rise above this to start a crossing." aria-label="Help">?</button></span><input type="number" id="th-a" step="0.5"></label>
+    <label class="field"><span><span id="th-b-label">Exit, dB below enter</span> <button type="button" class="tip" data-tip="The crossing ends once the signal has stayed below this for the hold-off time." aria-label="Help">?</button></span><input type="number" id="th-b" step="0.5"></label>
+  </div>
+  <div class="row">
+    <label class="field" id="hold-wrap"><span>Exit hold-off, ms <button type="button" class="tip" data-tip="How long the signal must stay below the exit level before the crossing ends. Stops one pass with a dip in the middle from counting twice. 0 to 1000." aria-label="Help">?</button></span><input type="number" id="hold" min="0" max="1000" step="10"></label>
+    <label class="field"><span>Minimum lap, ms <button type="button" class="tip" data-tip="Crossings closer together than this on one seat are ignored." aria-label="Help">?</button></span><input type="number" id="minlap" min="0" max="600000" step="100"></label>
+  </div>
+</section>
+
+<div class="actions">
+  <span id="setup-state" class="pill">no changes</span>
+  <span id="persist-note" class="small"></span>
+  <span class="spacer"></span>
+  <button class="btn ghost" id="reload">Discard changes</button>
+  <button class="btn" id="apply">Apply</button>
+  <span id="persist" hidden style="display:contents">
+    <button class="btn ghost" id="save-default">Save as power-on settings</button>
+    <button class="btn ghost" id="forget-default">Forget saved</button>
+    <button type="button" class="tip" data-tip="Apply changes the running Timer and lasts until it restarts. Save as power-on settings keeps what is running now, so the Timer starts with it. Saving pauses timing for a moment." aria-label="Help">?</button>
+  </span>
+</div>
+</div>
+
+<!-- ================================================================ Network -->
+<div class="page" id="p-network" hidden>
+<section id="net">
+  <h3>Address</h3>
+  <dl class="facts">
+    <dt>Now</dt><dd id="net-now">-</dd>
+    <dt>From</dt><dd id="net-how">-</dd>
+    <dt>By name</dt><dd id="net-name">-</dd>
+  </dl>
+  <div id="net-pending" class="state" hidden><span class="pill warn">Saved settings differ. They apply when the Timer restarts.</span></div>
+</section>
+<section>
+  <h3>Settings <button type="button" class="tip" data-tip="Used from the next restart. If a fixed address makes the Timer unreachable, fit a jumper between header pins 12 (GP9) and 13 (GND) and power it up: it then uses DHCP for that start. The USB serial console can also change these." aria-label="Help">?</button></h3>
+  <div class="row">
+    <label class="field"><span>Mode</span><select id="net-mode" aria-label="Address mode">
+      <option value="dhcp">Automatic (DHCP)</option>
+      <option value="static">Fixed address</option>
+    </select></label>
+    <label class="field net-static"><span>Address</span><input type="text" id="net-addr" placeholder="192.168.1.50" size="15"></label>
+    <label class="field net-static"><span>Mask</span><select id="net-prefix">
+      <option value="24">255.255.255.0 (/24)</option>
+      <option value="23">255.255.254.0 (/23)</option>
+      <option value="22">255.255.252.0 (/22)</option>
+      <option value="16">255.255.0.0 (/16)</option>
+    </select></label>
+    <label class="field net-static"><span>Gateway <button type="button" class="tip" data-tip="Optional. Only needed to reach the Timer from another network." aria-label="Help">?</button></span><input type="text" id="net-gw" placeholder="192.168.1.1" size="15"></label>
+  </div>
+  <div class="row">
+    <button class="btn" id="net-save">Save network settings</button>
+    <button class="btn ghost" id="restart">Restart the Timer</button>
+  </div>
+</section>
+</div>
+
+<!-- ================================================================ Firmware -->
+<div class="page" id="p-firmware" hidden>
+<section>
+  <h3>Timer firmware <button type="button" class="tip" data-tip="Choose the .bin update file, not the .uf2 (that one is for USB). The Timer stores it beside the firmware it is running, checks it and restarts to try it. If the new firmware cannot be reached, the Timer goes back to the old one by itself within about a minute. Timing stops for the update." aria-label="Help">?</button></h3>
+  <dl class="facts">
+    <dt>Version</dt><dd id="fw-ver">-</dd>
+    <dt>Running</dt><dd id="fwup-now">-</dd>
+    <dt id="fw-other-t">Other slot</dt><dd id="fw-other">-</dd>
+  </dl>
   <div id="fwup" hidden>
-    <div id="fwup-now" class="small"></div>
     <div id="fwup-form">
       <div class="row">
-        <label>New firmware <input type="file" id="fwup-file" accept=".bin"></label>
-        <button class="btn" id="fwup-go" disabled>Update over the network…</button>
+        <label class="field"><span>Update file (.bin)</span><input type="file" id="fwup-file" accept=".bin"></label>
+        <button class="btn" id="fwup-go" disabled style="align-self:flex-end">Update the Timer…</button>
       </div>
-      <progress id="fwup-bar" max="100" value="0" hidden style="width:100%"></progress>
-      <div id="fwup-state"></div>
-      <div class="small" style="margin-top:6px">Choose the <code>oft-timer.bin</code> written by <code>tools/uf2.py</code> (not the .uf2). The Timer stores it next to the firmware it is running, checks it, and restarts to try it. <b>Timing stops for the whole update</b>: while the file is stored (about half a minute) the Timer drops Node data, and then it restarts. The new firmware is on trial: if this page cannot reach it, the Timer restarts into the old firmware by itself within about a minute. Keep this page open until it reports the result.</div>
+      <progress id="fwup-bar" max="100" value="0" hidden></progress>
     </div>
-  </div>
-  <div id="nodeup" hidden>
-    <h3 style="margin:14px 0 4px;font-size:1rem">Node firmware</h3>
-    <div class="row">
-      <label>New Node firmware <input type="file" id="nodeup-file" accept=".bin"></label>
-      <select id="nodeup-part" aria-label="Which part">
-        <option value="65536">firmware.bin (the usual update)</option>
-        <option value="8192">bootloader.bin</option>
-        <option value="32768">partitions.bin</option>
-      </select>
-      <button class="btn" id="nodeup-go" disabled>Update the Node…</button>
-    </div>
-    <progress id="nodeup-bar" max="100" value="0" hidden style="width:100%"></progress>
-    <div id="nodeup-state"></div>
-    <div class="small" style="margin-top:6px">The Timer restarts the Node into its bootloader and writes the file over the same wires the Node link uses (the reset and boot wires must be connected; the wiring test below checks them). <b>Timing stops</b> until the Node is back, a minute or two. If it fails part way, the Node stays silent until an update succeeds: try again, or use the Node's own USB port.</div>
+    <div id="fwup-state" class="state"></div>
   </div>
   <div class="row" id="fw-actions" hidden>
     <button class="btn ghost" id="bootsel">Restart into USB update mode…</button>
-    <button class="btn ghost" id="wiretest">Test the Node's reset and boot wires…</button>
+    <button type="button" class="tip" data-tip="For installing a .uf2 over USB-C. The Timer stops timing and appears as a drive named RP2350. Power-cycle it to go back without installing." aria-label="Help">?</button>
   </div>
+</section>
+
+<section id="nodeup" hidden>
+  <h3>Node firmware <button type="button" class="tip" data-tip="The Timer restarts the Node into its bootloader and writes the file over the Node link wires; the reset and boot wires must be connected (Diagnostics has a test). Timing stops for a couple of minutes. If it fails part way the Node stays silent until an update succeeds: run it again, or use the Node's own USB port." aria-label="Help">?</button></h3>
+  <dl class="facts">
+    <dt>Node</dt><dd id="node-ver">-</dd>
+  </dl>
+  <div class="row">
+    <label class="field"><span>Firmware file (.bin)</span><input type="file" id="nodeup-file" accept=".bin"></label>
+    <label class="field"><span>Part <button type="button" class="tip" data-tip="Almost always firmware.bin. The bootloader and partition table only change with a new flash layout." aria-label="Help">?</button></span><select id="nodeup-part" aria-label="Which part">
+      <option value="65536">firmware.bin (the usual update)</option>
+      <option value="8192">bootloader.bin</option>
+      <option value="32768">partitions.bin</option>
+    </select></label>
+    <button class="btn" id="nodeup-go" disabled style="align-self:flex-end">Update the Node…</button>
+  </div>
+  <progress id="nodeup-bar" max="100" value="0" hidden></progress>
+  <div id="nodeup-state" class="state"></div>
+</section>
+</div>
+
+<!-- ================================================================ Diagnostics -->
+<div class="page" id="p-diagnostics" hidden>
+<section>
+  <h3>Node link <button type="button" class="tip" data-tip="Counts since the Timer started, with the rate over the last 10 seconds. A tile turns red while its count is climbing. Missing samples together with damaged messages or serial errors point at the wiring; together with drops at the Node they point at the Node's firmware." aria-label="Help">?</button></h3>
+  <div class="grid">
+    <div class="tile" id="l-gap-t"><b>Samples missing</b><span id="l-gap">-</span></div>
+    <div class="tile" id="l-crc-t"><b>Damaged messages <button type="button" class="tip" data-tip="Messages from the Node that failed their checksum." aria-label="Help">?</button></b><span id="l-crc">-</span></div>
+    <div class="tile" id="l-uart-t"><b>Serial receive errors <button type="button" class="tip" data-tip="Errors the Timer's serial port reported. A burst right after a restart or a firmware update is normal." aria-label="Help">?</button></b><span id="l-uart">-</span></div>
+    <div class="tile" id="l-over-t"><b>Dropped by the Node <button type="button" class="tip" data-tip="Messages the Node discarded before sending because its buffer was full." aria-label="Help">?</button></b><span id="l-over">-</span></div>
+    <div class="tile"><b>Node hop errors</b><span id="l-hop">-</span></div>
+    <div class="tile"><b>Node gain <button type="button" class="tip" data-tip="The receiver gain the Node is using." aria-label="Help">?</button></b><span id="l-gain">-</span></div>
+  </div>
+</section>
+
+<section>
+  <h3>Device</h3>
+  <dl class="facts">
+    <dt>Timer</dt><dd id="d-timer">-</dd>
+    <dt>Node</dt><dd id="fw">-</dd>
+  </dl>
+</section>
+
+<section id="wt-card" hidden>
+  <h3>Node wiring test <button type="button" class="tip" data-tip="Checks the reset (EN) and boot (BOOT) wires the Timer uses to restart and update the Node. It restarts the Node three times, so timing stops while it runs." aria-label="Help">?</button><span class="spacer"></span><button class="btn ghost sm" id="wiretest">Run the test…</button></h3>
   <div id="wt" hidden>
-    <table style="margin-top:8px">
+    <table>
       <tbody>
         <tr><td>Reset wire (EN)</td><td id="wt-en">-</td></tr>
         <tr><td>Boot wire (BOOT)</td><td id="wt-boot">-</td></tr>
         <tr><td>Node back to normal</td><td id="wt-rec">-</td></tr>
       </tbody>
     </table>
-    <div id="wt-step" class="small"></div>
+    <div id="wt-step" class="small" style="margin-top:6px"></div>
   </div>
 </section>
+</div>
 </main>
+
+<div id="toasts" aria-live="polite"></div>
+<div id="tipbox" role="tooltip" hidden></div>
+<dialog id="dlg"><form method="dialog">
+  <h3 id="dlg-title"></h3>
+  <p id="dlg-body"></p>
+  <div class="row end">
+    <button class="btn ghost" value="no" id="dlg-no">Cancel</button>
+    <button class="btn" value="yes" id="dlg-yes">OK</button>
+  </div>
+</form></dialog>
 
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
   const API = "/oft/v1";
   const WINDOW_US = 15e6;
+  const RACEBAND = [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917];
   const db = (v) => (v == null ? "-" : (v / 10).toFixed(1) + " dB");
-  const msg = (t) => { $("msg").textContent = t; };
-  const conn = (text, cls) => { const e = $("conn"); e.textContent = text; e.className = "pill " + cls; };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const json = async (path, opts) => {
     const r = await fetch(API + path, opts);
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
     return body;
   };
+  const pill = (el, text, cls) => { el.textContent = text; el.className = "pill " + (cls || ""); el.hidden = false; };
+  const conn = (text, cls) => pill($("conn"), text, cls);
 
+  // ---------------------------------------------------------------- toasts, dialog, tips
+  function toast(text, kind) {
+    const box = $("toasts"), t = document.createElement("div"), x = document.createElement("button");
+    t.className = "toast " + (kind || "");
+    t.append(Object.assign(document.createElement("span"), { textContent: text }), x);
+    x.textContent = "✕"; x.setAttribute("aria-label", "Dismiss");
+    x.onclick = () => t.remove();
+    // Under the top bar, clear of the buttons at the bottom of the Setup page.
+    box.style.top = Math.max(8, document.querySelector(".top").getBoundingClientRect().bottom + 8) + "px";
+    box.append(t);
+    while (box.children.length > 4) box.firstChild.remove();
+    setTimeout(() => t.remove(), kind === "bad" ? 14000 : 6000);
+  }
+  const note = (t) => toast(t, ""), done = (t) => toast(t, "ok"), fail = (t) => toast(t, "bad");
+
+  // An in-page question. Resolves true for the confirm button, false for anything else.
+  function ask({ title, body, ok = "OK", cancel = "Cancel", danger = false }) {
+    const d = $("dlg");
+    $("dlg-title").textContent = title;
+    $("dlg-body").textContent = body || "";
+    $("dlg-yes").textContent = ok;
+    $("dlg-yes").className = "btn" + (danger ? " danger" : "");
+    $("dlg-no").textContent = cancel;
+    return new Promise((resolve) => {
+      d.onclose = () => resolve(d.returnValue === "yes");
+      d.returnValue = "";
+      d.showModal();
+      $("dlg-no").focus();
+    });
+  }
+  $("dlg").addEventListener("click", (e) => { if (e.target === $("dlg")) $("dlg").close("no"); });
+
+  let tipFor = null;
+  function showTip(el) {
+    const box = $("tipbox");
+    tipFor = el;
+    box.textContent = el.dataset.tip;
+    box.hidden = false;
+    const r = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+    const x = Math.max(8, Math.min(window.innerWidth - b.width - 8, r.left + r.width / 2 - b.width / 2));
+    const below = r.bottom + 8, y = below + b.height > window.innerHeight - 8 && r.top - b.height - 8 > 0 ? r.top - b.height - 8 : below;
+    box.style.left = x + "px"; box.style.top = y + "px";
+  }
+  function hideTip() { tipFor = null; $("tipbox").hidden = true; }
+  const tipOf = (e) => e.target instanceof Element && e.target.closest(".tip");
+  document.addEventListener("mouseover", (e) => { const t = tipOf(e); if (t) showTip(t); });
+  document.addEventListener("mouseout", (e) => { if (tipOf(e)) hideTip(); });
+  document.addEventListener("focusin", (e) => { const t = tipOf(e); if (t) showTip(t); });
+  document.addEventListener("focusout", (e) => { if (tipOf(e)) hideTip(); });
+  document.addEventListener("click", (e) => { const t = tipOf(e); if (t) { e.preventDefault(); if (tipFor === t && e.detail) { /* a tap on the open tip leaves it open */ } showTip(t); } else hideTip(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
+  window.addEventListener("scroll", hideTip, true);
+
+  // ---------------------------------------------------------------- pages
+  const PAGES = ["live", "setup", "network", "firmware", "diagnostics"];
+  function showPage() {
+    let p = location.hash.slice(1);
+    if (!PAGES.includes(p) || (p === "network" && $("nav-network").hidden)) p = "live";
+    for (const n of PAGES) $("p-" + n).hidden = n !== p;
+    for (const a of $("nav").children) a.classList.toggle("on", a.dataset.page === p);
+    hideTip();
+    window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", showPage);
+
+  // ---------------------------------------------------------------- state
   let info = null, status = null, config = null, seat = 0, paused = false, dirty = false;
+  let draft = null;         // the Setup page's working copy of the config
+  let scope = "all";        // whose levels the Detection fields show: "all" or a seat number
+  let saveState = null;     // {saved, current_is_saved} from /config/save, if the Timer saves
   let fwBusy = false;       // a firmware update of the Timer itself is in progress
   let traces = {};          // seat -> [[t_us, p], ...]
   let marks = [];           // crossings
@@ -237,49 +449,65 @@
   let rateHist = [];        // [{t, gap, crc, uart, over}] for the 10 s rates
   let bootId = null, lastSeq = 0;
 
+  const caps = () => (info && info.capabilities) || {};
   const timerNow = () => (frozenNow != null ? frozenNow : clockOff == null ? null : clockOff + performance.now() * 1000);
   const seen = (t_us) => { const off = t_us - performance.now() * 1000; if (clockOff == null || off > clockOff || clockOff - off > 2e6) clockOff = off; };
 
-  // ---------------------------------------------------------------- info, config
+  // ---------------------------------------------------------------- info
   async function loadInfo() {
     info = await json("/info");
+    const c = caps(), rp = info.host === "rp2350";
     $("title").textContent = info.name || "OFT Timer";
     document.title = `${info.id} · OFT Timer`;
-    $("ident").textContent = `${info.id} · ${info.host} · protocol ${info.proto} · level ${info.level}`;
-    const nodes = (info.nodes || []).map((n) => `Node ${n.id} (${n.chip}, firmware ${n.fw}, ${n.link}, ${n.range_mhz ? n.range_mhz.join("–") + " MHz" : ""})`);
-    $("fw").textContent = `Timer firmware ${info.fw} on ${info.host}` + ((info.capabilities || {})["usb.console"] ? ", with the USB serial console. " : ". ") + (nodes.length ? nodes.join("; ") + "." : "No Node has introduced itself yet.");
-    $("fw-actions").hidden = info.host !== "rp2350";
-    if (info.host === "rp2350" && $("wt").hidden) pollWireTest();
-    if (info.host === "rp2350" && !fwBusy) loadFwTimer();
-    const nodeUp = (((info.capabilities || {})["fw.update"] || {}).nodes || []).includes("uart");
+    $("ident").textContent = info.id;
+    $("d-timer").textContent = `${info.id} · ${info.host} · protocol ${info.proto} · level ${info.level}`;
+    $("fw-ver").textContent = `${info.fw} on ${info.host}` + (c["usb.console"] ? ", with the USB serial console" : "");
+    const nodes = (info.nodes || []).map((n) => `${n.id} · ${n.chip} · firmware ${n.fw} · ${n.link}` + (n.range_mhz ? ` · ${n.range_mhz.join("–")} MHz` : ""));
+    $("fw").textContent = $("node-ver").textContent = nodes.length ? nodes.join("; ") : "No Node has introduced itself yet.";
+    $("fw-actions").hidden = !rp;
+    $("wt-card").hidden = !rp;
+    if (rp && $("wt").hidden) pollWireTest();
+    if (rp && !fwBusy) loadFwTimer();
+    if (!rp) { $("fwup-now").textContent = "This Timer is updated with its host's own tools."; $("fw-other-t").hidden = $("fw-other").hidden = true; }
+    const nodeUp = ((c["fw.update"] || {}).nodes || []).includes("uart");
     $("nodeup").hidden = !nodeUp;
     if (nodeUp && !nodeBusy) pollNodeFlash(false);
-    const caps = info.capabilities || {};
-    const persist = !!(caps.config && caps.config.persist);
+    const persist = !!(c.config && c.config.persist);
     $("persist").hidden = !persist;
-    $("net").hidden = !caps.network;
-    if (persist) loadSaveState(); else $("persist-note").textContent = "(not saved across a restart)";
-    if (caps.network && !netDirty) loadNetwork();
-    if (bootId && bootId !== info.boot_id) { msg(persist ? "The Timer restarted." : "The Timer restarted; settings are back to their defaults."); resetData(); dirty = false; await loadConfig(); }
+    $("th-scope-row").hidden = !(c.config && c.config.seat_thresholds);
+    if ($("nav-network").hidden !== !c.network) { $("nav-network").hidden = !c.network; showPage(); }
+    $("net-name").textContent = `http://${String(info.id).toLowerCase()}.local:${location.port || 80}/ where .local names resolve`;
+    if (persist) loadSaveState(); else { saveState = null; setupState(); }
+    if (c.network && !netDirty) loadNetwork();
+    if (bootId && bootId !== info.boot_id) { note(persist ? "The Timer restarted." : "The Timer restarted; settings are back to their defaults."); resetData(); setDirty(false); await loadConfig(); }
     bootId = info.boot_id;
   }
 
   function resetData() { traces = {}; marks = []; prevMid = {}; lastSeq = 0; rateHist = []; clockOff = null; $("xings").innerHTML = '<tr><td colspan="8" class="small">none yet</td></tr>'; }
 
-  function thLabels() {
-    const manual = $("thmode").value === "manual";
-    $("th-a-label").textContent = manual ? "Enter, dB" : "Enter, dB above floor";
-    $("th-b-label").textContent = manual ? "Exit, dB" : "Exit, dB below enter";
+  // ---------------------------------------------------------------- setup: seats, levels
+  function setDirty(v) { dirty = v; $("nav-dirty").hidden = !v; $("reload").disabled = !v; setupState(); }
+  function setupState() {
+    const p = $("setup-state"), s = saveState;
+    if (dirty) pill(p, "changes not applied", "warn");
+    else if (!s) pill(p, "applied", "ok");
+    else if (s.current_is_saved) pill(p, "applied and saved", "ok");
+    else pill(p, s.saved ? "applied, differs from the saved settings" : "applied, not saved", "");
+    $("persist-note").textContent = dirty || !s ? (s ? "" : "Not kept across a restart.") : s.current_is_saved ? "" : s.saved ? "A restart goes back to the saved settings." : "A restart goes back to the defaults.";
+    $("forget-default").disabled = !(s && s.saved);
   }
 
-  function seatConfig() { return ((config && config.seats) || []).find((s) => s.seat === seat); }
+  const draftSeat = (n) => draft && draft.seats.find((s) => s.seat === n);
+  const levelsOf = () => (scope === "all" ? draft.threshold : (draftSeat(scope) || {}).threshold || draft.threshold);
 
   function showConfig() {
     if (!config) return;
-    const seats = (config.seats || []).filter((s) => s.enabled);
+    const seats = (config.seats || []).filter((s) => s.enabled).sort((a, b) => a.seat - b.seat);
+    draft = JSON.parse(JSON.stringify({ ...config, seats }));
+    // the chart's seat picker
     const sel = $("seat");
     sel.innerHTML = "";
-    for (const s of seats) { const o = document.createElement("option"); o.value = s.seat; o.textContent = `seat ${s.seat}`; sel.appendChild(o); }
+    for (const s of seats) sel.add(new Option(`seat ${s.seat} · ${s.freq_mhz} MHz`, s.seat));
     if (!seats.some((s) => s.seat === seat) && seats.length) seat = seats[0].seat;
     sel.value = seat;
     sel.hidden = seats.length < 2;
@@ -288,100 +516,151 @@
     ns.innerHTML = "";
     for (let n = 1; n <= Math.max(maxSeats, seats.length); n++) ns.add(new Option(String(n), String(n)));
     ns.value = String(Math.max(1, seats.length));
-    $("seat-list").textContent = seats.length > 1 ? seats.map((s) => `seat ${s.seat}: ${s.freq_mhz}`).join(" · ") + ". Pick a seat next to the Signal heading to change it." : "One seat. Race software sees one seat per pilot it can time.";
-    $("freq-label").textContent = seats.length > 1 ? `Frequency of seat ${seat}, MHz` : "Frequency, MHz";
-    const sc = seatConfig();
-    if (sc) $("freq").value = sc.freq_mhz;
-    const t = (sc && sc.threshold) || config.threshold;
+    $("hold-wrap").hidden = config.exit_hold_ms == null;
+    if (config.exit_hold_ms != null) $("hold").value = config.exit_hold_ms;
+    $("minlap").value = config.min_lap_ms;
+    renderSeats();
+  }
+
+  function renderSeats() {
+    const body = $("seat-rows");
+    body.innerHTML = "";
+    for (const s of draft.seats) {
+      const tr = document.createElement("tr"), f = document.createElement("input"), q = document.createElement("select");
+      f.type = "number"; f.min = 5000; f.max = 6200; f.step = 1; f.value = s.freq_mhz; f.setAttribute("aria-label", `Seat ${s.seat} frequency`);
+      q.setAttribute("aria-label", `Seat ${s.seat} Raceband channel`);
+      q.add(new Option("Raceband…", ""));
+      RACEBAND.forEach((r, i) => q.add(new Option(`R${i + 1} · ${r}`, r)));
+      q.value = RACEBAND.includes(s.freq_mhz) ? s.freq_mhz : "";
+      f.oninput = () => { s.freq_mhz = Number(f.value); q.value = RACEBAND.includes(s.freq_mhz) ? s.freq_mhz : ""; setDirty(true); };
+      q.onchange = () => { if (q.value) { s.freq_mhz = Number(q.value); f.value = q.value; setDirty(true); } };
+      const cells = [`Seat ${s.seat}`, f, q, "-"];
+      cells.forEach((c, i) => { const td = document.createElement("td"); td.append(c); if (i === 3) td.id = `rate-${s.seat}`; tr.append(td); });
+      body.append(tr);
+    }
+    // whose levels
+    const sc = $("th-scope");
+    sc.innerHTML = "";
+    sc.add(new Option("All seats (shared levels)", "all"));
+    for (const s of draft.seats) sc.add(new Option(`Seat ${s.seat}` + (s.threshold ? " (own levels)" : ""), s.seat));
+    if (scope !== "all" && !draftSeat(scope)) scope = "all";
+    sc.value = scope;
+    showLevels();
+    showRates();
+  }
+
+  function thLabels() {
+    const manual = $("thmode").value === "manual";
+    $("th-a-label").textContent = manual ? "Enter, dB" : "Enter, dB above floor";
+    $("th-b-label").textContent = manual ? "Exit, dB" : "Exit, dB below enter";
+  }
+  function showLevels() {
+    const t = levelsOf();
     $("thmode").value = t.mode === "manual" ? "manual" : "auto";
     $("th-a").value = ((t.mode === "manual" ? t.enter : t.snr_enter) / 10).toFixed(1);
     $("th-b").value = ((t.mode === "manual" ? t.exit : t.hysteresis) / 10).toFixed(1);
     thLabels();
-    $("hold-wrap").hidden = config.exit_hold_ms == null;
-    if (config.exit_hold_ms != null) $("hold").value = config.exit_hold_ms;
-    $("minlap").value = config.min_lap_ms;
+    $("th-unset").hidden = scope === "all" || !(draftSeat(scope) || {}).threshold;
+  }
+  // The Detection fields as a threshold, stored in the draft for the chosen scope.
+  function storeLevels() {
+    const a = Math.round(Number($("th-a").value) * 10), b = Math.round(Number($("th-b").value) * 10);
+    const t = $("thmode").value === "manual" ? { mode: "manual", enter: a, exit: b } : { mode: "auto", snr_enter: a, hysteresis: b };
+    t.blank = $("th-a").value === "" || $("th-b").value === "";
+    if (scope === "all") draft.threshold = t;
+    else { const s = draftSeat(scope); if (s) { const own = !s.threshold; s.threshold = t; if (own) { const o = [...$("th-scope").options].find((o) => o.value === String(scope)); if (o) o.textContent = `Seat ${scope} (own levels)`; $("th-unset").hidden = false; } } }
+    setDirty(true);
+  }
+  function levelError(t, who) {
+    const [a, b] = t.mode === "manual" ? [t.enter, t.exit] : [t.snr_enter, t.hysteresis];
+    if (t.blank || !Number.isFinite(a) || !Number.isFinite(b)) return `${who}: fill in both levels.`;
+    if (t.mode === "manual" && b >= a) return `${who}: exit must be lower than enter.`;
+    if (t.mode !== "manual" && (a <= 0 || b <= 0 || b >= a)) return `${who}: enter must be above 0, and the exit gap between 0 and the enter value.`;
+    return null;
   }
 
   async function loadConfig() { config = await json("/config"); if (!dirty) showConfig(); }
 
-  for (const id of ["freq", "th-a", "th-b", "hold", "minlap"]) $(id).addEventListener("input", () => { dirty = true; });
-  $("nseats").addEventListener("change", () => { dirty = true; });
+  $("nseats").addEventListener("change", () => {
+    const want = Number($("nseats").value) || 1;
+    draft.seats = draft.seats.slice(0, want);
+    // New seats take the first free seat number and the first Raceband channel not in use.
+    for (let n = 0; draft.seats.length < want && n < 8; n++) {
+      if (draftSeat(n)) continue;
+      draft.seats.push({ seat: n, freq_mhz: RACEBAND.find((r) => !draft.seats.some((s) => s.freq_mhz === r)) || RACEBAND[n], enabled: true });
+    }
+    draft.seats.sort((a, b) => a.seat - b.seat);
+    setDirty(true);
+    renderSeats();
+  });
+  for (const id of ["th-a", "th-b"]) $(id).addEventListener("input", storeLevels);
   $("thmode").addEventListener("change", () => {
-    dirty = true;
     thLabels();
-    const s = status && (status.seats || []).find((x) => x.seat === seat);
+    // Starting values for the other mode: the levels in use now, or the usual margins.
+    const s = status && (status.seats || []).find((x) => x.seat === (scope === "all" ? seat : scope));
     if ($("thmode").value === "manual" && s && s.enter != null) { $("th-a").value = (s.enter / 10).toFixed(1); $("th-b").value = (s.exit / 10).toFixed(1); }
     else if ($("thmode").value === "auto") { $("th-a").value = "15.0"; $("th-b").value = "5.0"; }
+    storeLevels();
   });
-  $("seat").addEventListener("change", () => { seat = Number($("seat").value); dirty = false; showConfig(); });
-  $("reload").addEventListener("click", async () => { dirty = false; try { await loadConfig(); msg("Settings reloaded."); } catch (e) { msg("Could not read settings: " + e.message); } });
+  $("th-scope").addEventListener("change", () => { const v = $("th-scope").value; scope = v === "all" ? "all" : Number(v); showLevels(); });
+  $("th-unset").addEventListener("click", () => { const s = draftSeat(scope); if (s) delete s.threshold; setDirty(true); renderSeats(); });
+  $("hold").addEventListener("input", () => { draft.exit_hold_ms = $("hold").value === "" ? null : Number($("hold").value); setDirty(true); });
+  $("minlap").addEventListener("input", () => { draft.min_lap_ms = $("minlap").value === "" ? null : Number($("minlap").value); setDirty(true); });
+  $("seat").addEventListener("change", () => { seat = Number($("seat").value); });
+  $("reload").addEventListener("click", async () => { setDirty(false); try { await loadConfig(); note("Changes discarded."); } catch (e) { fail("Could not read settings: " + e.message); } });
 
   $("apply").addEventListener("click", async () => {
-    const f = Number($("freq").value), a = Math.round(Number($("th-a").value) * 10), b = Math.round(Number($("th-b").value) * 10);
-    const manual = $("thmode").value === "manual";
-    if (!(f >= 5000 && f <= 6200)) return msg("Frequency must be 5000 to 6200 MHz.");
-    if ($("th-a").value === "" || $("th-b").value === "" || !Number.isFinite(a) || !Number.isFinite(b)) return msg("Fill in both levels.");
-    if (manual && b >= a) return msg("Exit must be lower than enter.");
-    if (!manual && (a <= 0 || b <= 0 || b >= a)) return msg("Auto: enter must be above 0, and the exit gap between 0 and the enter value.");
+    if (!draft) return;
+    const range = ((info && info.nodes) || []).map((n) => n.range_mhz).find(Boolean);
+    for (const s of draft.seats) {
+      if (!(s.freq_mhz >= 5000 && s.freq_mhz <= 6200)) return fail(`Seat ${s.seat}: the frequency must be 5000 to 6200 MHz.`);
+      if (range && (s.freq_mhz < range[0] || s.freq_mhz > range[1])) return fail(`Seat ${s.seat}: ${s.freq_mhz} MHz is outside what the Node can tune (${range[0]} to ${range[1]} MHz).`);
+      if (s.threshold) { const e = levelError(s.threshold, `Seat ${s.seat}`); if (e) return fail(e); }
+    }
+    const dup = draft.seats.map((s) => s.freq_mhz).find((x, i, a) => a.indexOf(x) !== i);
+    if (dup) return fail(`Two seats are on ${dup} MHz. Give each seat its own frequency.`);
+    const e = levelError(draft.threshold, "Shared levels");
+    if (e) return fail(e);
+    if (draft.exit_hold_ms != null && !(draft.exit_hold_ms >= 0 && draft.exit_hold_ms <= 1000)) return fail("Exit hold-off must be 0 to 1000 ms.");
+    if (!(draft.min_lap_ms >= 0)) return fail("Fill in the minimum lap.");
     try {
-      const c = await json("/config");
-      const th = manual ? { mode: "manual", enter: a, exit: b } : { mode: "auto", snr_enter: a, hysteresis: b };
-      // Seats: keep the lowest-numbered ones when fewer are wanted; new ones take the first
-      // free seat number and the first Raceband channel not in use.
-      const want = Number($("nseats").value) || 1;
-      let seats = (c.seats || []).filter((s) => s.enabled).sort((a, b) => a.seat - b.seat);
-      const before = seats.length;
-      if (want !== before) {
-        seats = seats.slice(0, want);
-        const raceband = [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917];
-        for (let n = 0; seats.length < want && n < 8; n++) {
-          if (seats.some((s) => s.seat === n)) continue;
-          const freq = raceband.find((r) => !seats.some((s) => s.freq_mhz === r) && !(n !== seat && r === f)) || raceband[n];
-          seats.push({ seat: n, freq_mhz: freq, enabled: true });
-        }
-        c.seats = seats.sort((a, b) => a.seat - b.seat);
-        c.seats_per_node = Math.max(c.seats_per_node || 8, want);
-      }
-      const sc = (c.seats || []).find((s) => s.seat === seat);
-      if (sc) sc.freq_mhz = f;
-      const dup = (c.seats || []).filter((s) => s.enabled).map((s) => s.freq_mhz).find((x, i, a) => a.indexOf(x) !== i);
-      if (dup) return msg(`Two seats would both be on ${dup} MHz. Give each seat its own frequency.`);
-      // A seat that has its own levels keeps having its own; otherwise change the Timer-wide ones.
-      if (sc && sc.threshold) sc.threshold = th; else c.threshold = th;
-      if (c.exit_hold_ms != null && $("hold").value !== "") c.exit_hold_ms = Math.max(0, Math.min(1000, Math.round(Number($("hold").value))));
-      if ($("minlap").value !== "") c.min_lap_ms = Math.max(0, Math.round(Number($("minlap").value)));
+      const c = await json("/config"), before = (c.seats || []).filter((s) => s.enabled).length;
+      const own = caps().config && caps().config.seat_thresholds;
+      const clean = (t) => { const { blank, ...rest } = t; return rest; };
+      c.seats = draft.seats.map((s) => ({ seat: s.seat, freq_mhz: s.freq_mhz, enabled: true, ...(own && s.threshold ? { threshold: clean(s.threshold) } : {}) }));
+      c.seats_per_node = Math.max(c.seats_per_node || 8, c.seats.length);
+      c.threshold = clean(draft.threshold);
+      if (c.exit_hold_ms != null && draft.exit_hold_ms != null) c.exit_hold_ms = Math.round(draft.exit_hold_ms);
+      c.min_lap_ms = Math.round(draft.min_lap_ms);
       config = await json("/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
-      dirty = false;
+      setDirty(false);
       showConfig();
-      msg(want !== before ? `Settings applied. The Timer now has ${want} seat${want > 1 ? "s" : ""}; detection restarted.` : "Settings applied.");
+      const n = c.seats.length;
+      done(n !== before ? `Applied. The Timer now has ${n} seat${n > 1 ? "s" : ""}.` : "Applied.");
       if (!$("persist").hidden) loadSaveState();
-    } catch (e) { msg("Could not apply: " + e.message); }
+    } catch (err) { fail("Could not apply: " + err.message); }
   });
 
-  // ---------------------------------------------------------------- saved settings, network
-  function showSaveState(s) {
-    $("persist-note").textContent = s.current_is_saved ? "(saved: the Timer starts with these)" : s.saved ? "(changed since the last save)" : "(not saved yet: a restart goes back to the defaults)";
-    $("persist-state").textContent = s.current_is_saved ? "The settings in use are the saved ones." : s.saved ? "The Timer would start with the older saved settings." : "Nothing is saved.";
-    $("forget-default").disabled = !s.saved;
-  }
-  async function loadSaveState() { try { showSaveState(await json("/config/save")); } catch { /* older firmware */ } }
+  // ---------------------------------------------------------------- saved settings
+  async function loadSaveState() { try { saveState = await json("/config/save"); } catch { saveState = null; /* older firmware */ } setupState(); }
   $("save-default").addEventListener("click", async () => {
-    if (dirty && !confirm("You have changes that are not applied yet. Save the settings the Timer is using now, without them?")) return;
-    try { showSaveState(await json("/config/save", { method: "POST" })); msg("Saved. The Timer will start with these settings."); }
-    catch (e) { msg("Could not save: " + e.message); }
+    if (dirty && !(await ask({ title: "Save without your changes?", body: "You have changes that are not applied yet. Saving keeps what the Timer is running now, without them.", ok: "Save what is running" }))) return;
+    try { saveState = await json("/config/save", { method: "POST" }); setupState(); done("Saved. The Timer will start with these settings."); }
+    catch (e) { fail("Could not save: " + e.message); }
   });
   $("forget-default").addEventListener("click", async () => {
-    if (!confirm("Forget the saved settings? The Timer will start with its built-in defaults. The settings in use now do not change.")) return;
-    try { showSaveState(await json("/config/save", { method: "DELETE" })); msg("Saved settings forgotten."); }
-    catch (e) { msg("Could not forget: " + e.message); }
+    if (!(await ask({ title: "Forget the saved settings?", body: "The Timer will start with its built-in defaults. What it is running now does not change.", ok: "Forget", danger: true }))) return;
+    try { saveState = await json("/config/save", { method: "DELETE" }); setupState(); done("Saved settings forgotten."); }
+    catch (e) { fail("Could not forget: " + e.message); }
   });
 
+  // ---------------------------------------------------------------- network
   let netDirty = false;
   function netFields() { for (const e of document.querySelectorAll(".net-static")) e.hidden = $("net-mode").value !== "static"; }
   function showNetwork(n) {
-    const now = n.now ? `${n.now.address}/${n.now.prefix}` + (n.now.gateway ? `, gateway ${n.now.gateway}` : "") : "no address yet";
-    const how = { dhcp: "from DHCP", static: "fixed", "dhcp (recovery jumper)": "from DHCP, because the recovery jumper is fitted" }[n.using] || n.using;
-    $("net-now").textContent = `Address now: ${now} (${how}).` + (n.restart_needed ? " The saved settings differ and apply at the next restart." : "");
+    $("net-now").textContent = n.now ? `${n.now.address}/${n.now.prefix}` + (n.now.gateway ? `, gateway ${n.now.gateway}` : "") : "no address yet";
+    $("net-how").textContent = { dhcp: "DHCP", static: "fixed address", "dhcp (recovery jumper)": "DHCP, because the recovery jumper is fitted" }[n.using] || n.using;
+    $("net-pending").hidden = !n.restart_needed;
     if (netDirty) return;
     $("net-mode").value = n.saved.mode;
     $("net-addr").value = n.saved.address || (n.now ? n.now.address : "");
@@ -398,20 +677,20 @@
     const isStatic = $("net-mode").value === "static";
     const ip = (v) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v) && v.split(".").every((x) => Number(x) <= 255);
     const addr = $("net-addr").value.trim(), gw = $("net-gw").value.trim();
-    if (isStatic && !ip(addr)) return msg("Address must look like 192.168.1.50.");
-    if (isStatic && gw && !ip(gw)) return msg("Gateway must look like 192.168.1.1, or be left empty.");
+    if (isStatic && !ip(addr)) return fail("The address must look like 192.168.1.50.");
+    if (isStatic && gw && !ip(gw)) return fail("The gateway must look like 192.168.1.1, or be left empty.");
     const body = isStatic ? { mode: "static", address: addr, prefix: Number($("net-prefix").value), ...(gw ? { gateway: gw } : {}) } : { mode: "dhcp" };
-    if (isStatic && !confirm(`Save the fixed address ${addr}?\n\nAfter the next restart the Timer answers only at http://${addr}:${location.port || 7270}/. If that address is wrong for your network you will need the recovery jumper to get back in.`)) return;
+    if (isStatic && !(await ask({ title: `Save the fixed address ${addr}?`, body: `After the next restart the Timer answers only at http://${addr}:${location.port || 7270}/.\n\nIf that address is wrong for your network, you will need the recovery jumper or the USB console to get back in.`, ok: "Save address" }))) return;
     try {
       netDirty = false;
       showNetwork(await json("/network", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
-      msg("Network settings saved. Restart the Timer to use them.");
-    } catch (e) { netDirty = true; msg("Could not save network settings: " + e.message); }
+      done("Network settings saved. Restart the Timer to use them.");
+    } catch (e) { netDirty = true; fail("Could not save network settings: " + e.message); }
   });
   $("restart").addEventListener("click", async () => {
-    if (!confirm("Restart the Timer now? Timing stops for a few seconds, and settings that are not saved are lost.")) return;
-    try { await json("/restart", { method: "POST" }); msg("The Timer is restarting. If its address changes, open the new address."); }
-    catch (e) { msg("Could not restart: " + e.message); }
+    if (!(await ask({ title: "Restart the Timer?", body: "Timing stops for a few seconds. Settings that are applied but not saved are lost.", ok: "Restart", danger: true }))) return;
+    try { await json("/restart", { method: "POST" }); note("The Timer is restarting. If its address changes, open the new address."); }
+    catch (e) { fail("Could not restart: " + e.message); }
   });
 
   // ---------------------------------------------------------------- status
@@ -420,43 +699,56 @@
     if (!old || now <= old.t) return 0;
     return (value - old[key]) / ((now - old.t) / 1e6);
   }
+  function showRates() {
+    for (const s of (status && status.seats) || []) { const td = $(`rate-${s.seat}`); if (td) td.textContent = s.rate_hz ? `${s.rate_hz} /s` : "none"; }
+  }
 
   function showStatus(st) {
     status = st;
     $("s-node").innerHTML = st.node_connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>';
+    pill($("h-node"), st.node_connected ? "Node connected" : "Node not connected", st.node_connected ? "ok" : "bad");
     const err = st.clock_err_us == null ? "" : `, error ${st.clock_err_us.toFixed(1)} µs`;
     const drift = st.drift_ppm == null ? "" : `, drift ${st.drift_ppm.toFixed(0)} ppm`;
     $("s-clock").textContent = st.clock_synced ? `${st.clock_source}${err}${drift}` : `${st.clock_source || "none"}, not synced yet`;
+    pill($("h-clock"), st.clock_synced ? "clock synced" : "clock not synced", st.clock_synced ? "ok" : "warn");
     const s = (st.seats || []).find((x) => x.seat === seat) || (st.seats || [])[0];
-    $("s-rate").textContent = s ? `${s.rate_hz} Hz` : "no seat";
+    $("s-rate").textContent = s ? `${s.rate_hz} per second` : "no seat";
     const up = st.uptime_s;
     $("s-up").textContent = up >= 3600 ? `${Math.floor(up / 3600)} h ${Math.floor((up % 3600) / 60)} min` : up >= 60 ? `${Math.floor(up / 60)} min ${up % 60} s` : `${up} s`;
     $("s-temp").textContent = st.temp_c ? `${st.temp_c.toFixed(0)} °C` : "not reported";
     $("s-ttemp").textContent = st.timer_temp_c ? `${st.timer_temp_c.toFixed(0)} °C` : "not reported";
+    $("s-clients-t").hidden = st.clients == null;
     $("s-clients").textContent = st.clients == null ? "-" : st.clients;
     $("s-sig").textContent = s && s.rssi != null && s.floor != null
-      ? `now ${db(s.rssi)}, floor ${db(s.floor)}, ${((s.rssi - s.floor) / 10).toFixed(1)} dB above floor; enter ${db(s.enter)}, exit ${db(s.exit)}`
-      : "no samples yet";
+      ? `Now ${db(s.rssi)} · floor ${db(s.floor)} · ${((s.rssi - s.floor) / 10).toFixed(1)} dB above floor · enter ${db(s.enter)} · exit ${db(s.exit)}`
+      : "No samples yet.";
+    showRates();
 
     const l = st.link || {};
     const gap = l.gap_samples != null ? l.gap_samples : st.dropped;
     const h = { t: st.time_us, gap: gap || 0, crc: l.crc_errors || 0, uart: l.uart_errors || 0, over: l.node_overruns || 0 };
     rateHist.push(h);
     while (rateHist.length > 2 && st.time_us - rateHist[1].t > 10e6) rateHist.shift();
+    let alerts = 0;
     const show = (id, key, value, unit, alertAbove) => {
       if (value == null) { $(id).textContent = "not reported"; $(id + "-t").classList.remove("alert"); return; }
-      const r = rate(key, st.time_us, value);
+      const r = rate(key, st.time_us, value), bad = r > alertAbove;
       $(id).textContent = `${value} (${r.toFixed(1)} ${unit}/s)`;
-      $(id + "-t").classList.toggle("alert", r > alertAbove);
+      $(id + "-t").classList.toggle("alert", bad);
+      if (bad) alerts++;
     };
-    const total = s && s.rate_hz ? s.rate_hz : 0;
+    const total = (st.seats || []).reduce((n, x) => n + (x.rate_hz || 0), 0);
     show("l-gap", "gap", gap, "samples", total ? total * 0.005 : 5);
-    if (gap != null && total) $("l-gap").textContent += `, ${((rate("gap", st.time_us, gap) / total) * 100).toFixed(1)}%`;
+    const lossPct = gap != null && total ? (rate("gap", st.time_us, gap) / total) * 100 : 0;
+    if (gap != null && total) $("l-gap").textContent += `, ${lossPct.toFixed(1)}%`;
     show("l-crc", "crc", l.crc_errors, "msg", 0.05);
     show("l-uart", "uart", l.uart_errors, "err", 0.05);
     show("l-over", "over", l.node_overruns, "msg", 0.05);
     $("l-hop").textContent = l.node_hop_errors == null ? "not reported" : l.node_hop_errors;
     $("l-gain").textContent = l.node_gain == null ? "not reported" : l.node_gain === 255 ? "auto" : l.node_gain;
+    $("nav-alert").hidden = alerts === 0;
+    if (!st.node_connected) $("h-loss").hidden = true;
+    else pill($("h-loss"), alerts ? `losing samples (${lossPct.toFixed(1)}%)` : "link clean", alerts ? "bad" : "ok");
   }
 
   // ---------------------------------------------------------------- crossings
@@ -486,7 +778,7 @@
       retry = 500;
       conn("live", "ok");
       ws.send(JSON.stringify({ type: "sub", crossings: { since: lastSeq }, samples: { seats: "all", decimate: 5 }, status: true }));
-      loadInfo().then(loadConfig).catch((e) => msg("Could not read the Timer: " + e.message));
+      loadInfo().then(loadConfig).catch((e) => fail("Could not read the Timer: " + e.message));
     };
     ws.onmessage = (e) => {
       let m;
@@ -506,6 +798,7 @@
     };
     ws.onclose = () => {
       conn("disconnected, retrying", "bad");
+      for (const id of ["h-node", "h-clock", "h-loss"]) $(id).hidden = true;
       setTimeout(connect, retry);
       retry = Math.min(retry * 2, 5000);
     };
@@ -564,83 +857,37 @@
     $("c-info").textContent = `highest in view ${db(peak)}` + (s && s.floor != null ? ` (${((peak - s.floor) / 10).toFixed(1)} dB above floor)` : "") + (paused ? " · paused" : "");
   }
 
-  // ---------------------------------------------------------------- firmware
+  // ---------------------------------------------------------------- firmware: USB update mode
   $("bootsel").addEventListener("click", async () => {
-    if (!confirm("Restart the Timer into USB update mode?\n\nIt stops timing and waits on its USB-C port as a drive named RP2350. Copy a .uf2 onto that drive to bring it back, or power-cycle it to return to the current firmware.")) return;
-    try { await json("/fw/bootsel", { method: "POST" }); msg("The Timer is restarting into USB update mode."); }
-    catch (e) { msg("Could not restart into update mode: " + e.message); }
+    if (!(await ask({ title: "Restart into USB update mode?", body: "The Timer stops timing and waits on its USB-C port as a drive named RP2350.\n\nCopy a .uf2 onto that drive to bring it back, or power-cycle it to return to the current firmware.", ok: "Restart into update mode", danger: true }))) return;
+    try { await json("/fw/bootsel", { method: "POST" }); note("The Timer is restarting into USB update mode."); }
+    catch (e) { fail("Could not restart into update mode: " + e.message); }
   });
 
-  // ---------------------------------------------------------------- firmware update over the network
+  // ---------------------------------------------------------------- firmware: the Timer over the network
   // Only on a Timer that updates itself (the RP2350 firmware): POST /fw/timer stores the
   // image in the spare flash slot and restarts into it on trial. The new firmware confirms
   // itself once a client has reached it, which the polling below does.
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const buildText = (b) => (b == null ? "an unnumbered build" : `build ${b} (${new Date((1577836800 + b) * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC)`);
-  const fwState = (text, cls) => { $("fwup-state").innerHTML = ""; const e = document.createElement("span"); e.className = cls ? "pill " + cls : "small"; e.textContent = text; $("fwup-state").append(e); };
+  const stateIn = (id) => (text, cls) => { $(id).innerHTML = ""; const e = document.createElement("span"); e.className = cls ? "pill " + cls : "small"; e.textContent = text; $(id).append(e); };
+  const fwState = stateIn("fwup-state"), nodeState = stateIn("nodeup-state");
   const fwTimer = async (ms) => {
     const ac = new AbortController(), timer = setTimeout(() => ac.abort(), ms);
     try { return await json("/fw/timer", { signal: ac.signal, cache: "no-store" }); } finally { clearTimeout(timer); }
   };
   function showFwTimer(f) {
-    const self = info && info.capabilities && info.capabilities["fw.update"] && info.capabilities["fw.update"].self;
+    const self = (caps()["fw.update"] || {}).self;
     $("fwup").hidden = false;
     $("fwup-form").hidden = !(f.supported && self);
+    $("fw-other-t").hidden = $("fw-other").hidden = !f.supported;
     if (!f.supported) { $("fwup-now").textContent = "Update over the network is not available: " + (f.reason || "not supported by this firmware") + "."; return; }
-    const other = f.other == null ? "The other slot is empty." : f.other.confirmed ? `The other slot holds ${buildText(f.other.build)}.` : `The other slot holds ${buildText(f.other.build)}, which was never confirmed.`;
-    const state = f.state === "trial" ? " It is on trial after an update and has not confirmed itself yet." : f.state === "restarting" ? " It is about to restart into new firmware." : "";
-    $("fwup-now").textContent = `Running ${buildText(f.build)} from slot ${f.slot}.${state} ${other}`;
+    const state = f.state === "trial" ? " On trial after an update; not confirmed yet." : f.state === "restarting" ? " About to restart into new firmware." : "";
+    $("fwup-now").textContent = `${buildText(f.build)}, slot ${f.slot}.${state}`;
+    $("fw-other").textContent = f.other == null ? "empty" : buildText(f.other.build) + (f.other.confirmed ? " (the fallback)" : " (never confirmed)");
   }
-  // ---------------------------------------------------------------- Node firmware
-  let nodeBusy = false;
-  const nodeState = (text, cls) => { $("nodeup-state").innerHTML = ""; const e = document.createElement("span"); e.className = cls ? "pill " + cls : "small"; e.textContent = text; $("nodeup-state").append(e); };
-  function showNodeFlash(f) {
-    const bar = $("nodeup-bar");
-    if (f.running) {
-      bar.hidden = false;
-      bar.value = f.bytes ? Math.round((100 * f.written) / f.bytes) : 0;
-      nodeState(`Updating the Node: ${f.step}` + (f.step === "writing" ? ` (${Math.round(f.written / 1024)} of ${Math.round(f.bytes / 1024)} KB)` : "") + "…");
-    } else if (f.done) {
-      bar.hidden = true;
-      if (f.ok) nodeState(`Node updated in ${f.seconds} s: ${Math.round(f.bytes / 1024)} KB written and checked. ` + (f.returned ? "The Node is back on the link." : "The Node has not come back on the link yet."), f.returned ? "ok" : "bad");
-      else nodeState(`Node update failed after ${f.seconds} s: ${f.error}. ` + (f.returned ? "The Node restarted with what it had." : "The Node is not answering; run the update again."), "bad");
-    }
-    return f.running;
-  }
-  async function pollNodeFlash(keepGoing) {
-    try {
-      const running = showNodeFlash(await json("/fw/node"));
-      if (running || keepGoing) { nodeBusy = running; $("nodeup-go").disabled = running || !$("nodeup-file").files.length; }
-      if (running) setTimeout(() => pollNodeFlash(true), 700);
-      else if (keepGoing) loadInfo().catch(() => {});
-    } catch { if (keepGoing) setTimeout(() => pollNodeFlash(true), 1500); }
-  }
-  $("nodeup-file").addEventListener("change", () => {
-    const f = $("nodeup-file").files[0];
-    if (f) { const n = f.name.toLowerCase(); $("nodeup-part").value = n.includes("bootloader") ? "8192" : n.includes("partition") ? "32768" : "65536"; }
-    $("nodeup-go").disabled = nodeBusy || !f;
-  });
-  $("nodeup-go").addEventListener("click", async () => {
-    const file = $("nodeup-file").files[0];
-    if (!file || nodeBusy) return;
-    const part = $("nodeup-part").selectedOptions[0].textContent;
-    if (!confirm(`Write ${file.name} (${Math.round(file.size / 1024)} KB) to the Node as ${part}?\n\nTiming stops until the Node is back, a minute or two.`)) return;
-    nodeBusy = true; $("nodeup-go").disabled = true;
-    nodeState("Sending the file to the Timer…");
-    try {
-      const r = await fetch(`${API}/fw/node?offset=${$("nodeup-part").value}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-      showNodeFlash(body);
-      setTimeout(() => pollNodeFlash(true), 500);
-    } catch (e) {
-      nodeBusy = false; $("nodeup-go").disabled = false;
-      nodeState("Could not start the Node update: " + e.message, "bad");
-    }
-  });
-
   async function loadFwTimer() {
-    try { showFwTimer(await fwTimer(3000)); } catch { $("fwup").hidden = true; /* this firmware has no network update */ }
+    try { showFwTimer(await fwTimer(3000)); }
+    catch { $("fwup").hidden = true; $("fwup-now").textContent = "not reported by this firmware"; $("fw-other-t").hidden = $("fw-other").hidden = true; /* no network update */ }
   }
   const fwPost = (file, onProgress) => new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
@@ -659,13 +906,13 @@
   $("fwup-go").addEventListener("click", async () => {
     const file = $("fwup-file").files[0];
     if (!file || fwBusy) return;
-    if (!confirm(`Update the Timer's firmware with ${file.name} (${(file.size / 1024).toFixed(0)} KB)?\n\nTiming stops for about a minute: the Timer stores the file, restarts, and tries the new firmware. If the new firmware cannot be reached it goes back to the current one by itself.`)) return;
+    if (!(await ask({ title: "Update the Timer's firmware?", body: `${file.name}, ${(file.size / 1024).toFixed(0)} KB.\n\nTiming stops for about a minute while the Timer stores the file, restarts and tries it. If the new firmware cannot be reached, the Timer goes back to the current one by itself.`, ok: "Update" }))) return;
     fwBusy = true; $("fwup-go").disabled = true; $("fwup-file").disabled = true;
     const bar = $("fwup-bar"); bar.hidden = false; bar.value = 0;
     try {
       let before = null;
       try { before = await fwTimer(3000); } catch { /* shown as unknown below */ }
-      if (/\.uf2$/i.test(file.name)) throw new Error("that is the USB install file; choose oft-timer.bin");
+      if (/\.uf2$/i.test(file.name)) throw new Error("that is the USB install file; choose the .bin");
       if (before && before.max_bytes && file.size > before.max_bytes) throw new Error(`the file is larger than a firmware slot (${before.max_bytes} bytes)`);
       fwState("Sending and storing the firmware…");
       const sent = await fwPost(file, (p) => { bar.value = 100 * p; if (p >= 1) fwState("Sent. The Timer is checking what it stored…"); });
@@ -699,14 +946,61 @@
     loadInfo().catch(() => {});
   });
 
+  // ---------------------------------------------------------------- firmware: the Node, through the Timer
+  let nodeBusy = false;
+  function showNodeFlash(f) {
+    const bar = $("nodeup-bar");
+    if (f.running) {
+      bar.hidden = false;
+      bar.value = f.bytes ? Math.round((100 * f.written) / f.bytes) : 0;
+      nodeState(`Updating the Node: ${f.step}` + (f.step === "writing" ? ` (${Math.round(f.written / 1024)} of ${Math.round(f.bytes / 1024)} KB)` : "") + "…");
+    } else if (f.done) {
+      bar.hidden = true;
+      if (f.ok) nodeState(`Node updated in ${f.seconds} s: ${Math.round(f.bytes / 1024)} KB written and checked. ` + (f.returned ? "The Node is back on the link." : "The Node has not come back on the link yet."), f.returned ? "ok" : "bad");
+      else nodeState(`Node update failed after ${f.seconds} s: ${f.error}. ` + (f.returned ? "The Node restarted with what it had." : "The Node is not answering; run the update again."), "bad");
+    }
+    return f.running;
+  }
+  async function pollNodeFlash(keepGoing) {
+    try {
+      const running = showNodeFlash(await json("/fw/node"));
+      if (running || keepGoing) { nodeBusy = running; $("nodeup-go").disabled = running || !$("nodeup-file").files.length; }
+      if (running) setTimeout(() => pollNodeFlash(true), 700);
+      else if (keepGoing) loadInfo().catch(() => {});
+    } catch { if (keepGoing) setTimeout(() => pollNodeFlash(true), 1500); }
+  }
+  $("nodeup-file").addEventListener("change", () => {
+    const f = $("nodeup-file").files[0];
+    if (f) { const n = f.name.toLowerCase(); $("nodeup-part").value = n.includes("bootloader") ? "8192" : n.includes("partition") ? "32768" : "65536"; }
+    $("nodeup-go").disabled = nodeBusy || !f;
+  });
+  $("nodeup-go").addEventListener("click", async () => {
+    const file = $("nodeup-file").files[0];
+    if (!file || nodeBusy) return;
+    const part = $("nodeup-part").selectedOptions[0].textContent;
+    if (!(await ask({ title: "Update the Node's firmware?", body: `${file.name}, ${Math.round(file.size / 1024)} KB, written as ${part}.\n\nTiming stops until the Node is back, a couple of minutes.`, ok: "Update" }))) return;
+    nodeBusy = true; $("nodeup-go").disabled = true;
+    nodeState("Sending the file to the Timer…");
+    try {
+      const r = await fetch(`${API}/fw/node?offset=${$("nodeup-part").value}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      showNodeFlash(body);
+      setTimeout(() => pollNodeFlash(true), 500);
+    } catch (e) {
+      nodeBusy = false; $("nodeup-go").disabled = false;
+      nodeState("Could not start the Node update: " + e.message, "bad");
+    }
+  });
+
   // ---------------------------------------------------------------- wiring test
   const verdict = (v, okText, badText) => (v == null ? "waiting" : v ? `<span class="pill ok">${okText}</span>` : `<span class="pill bad">${badText}</span>`);
   function showWireTest(w) {
     $("wt").hidden = !(w.running || w.done);
-    $("wt-en").innerHTML = verdict(w.en_ok, `works: the Node restarted and was back in ${(w.en_ms / 1000).toFixed(1)} s`, "no restart seen within 90 s");
-    $("wt-boot").innerHTML = verdict(w.boot_ok, "works: the Node's built-in bootloader answered", "the bootloader did not answer");
+    $("wt-en").innerHTML = verdict(w.en_ok, `works: back in ${(w.en_ms / 1000).toFixed(1)} s`, "no restart seen within 90 s");
+    $("wt-boot").innerHTML = verdict(w.boot_ok, "works: the bootloader answered", "the bootloader did not answer");
     $("wt-rec").innerHTML = verdict(w.recovered, `yes, after ${(w.recover_ms / 1000).toFixed(1)} s`, "not seen within 90 s; power-cycle the Timer");
-    $("wt-step").textContent = w.running ? `Running: ${w.step}…` : w.done ? "Finished. A failed boot wire with a working reset wire usually means the BOOT pad is not the pin the firmware assumes, or that wire is loose." : "";
+    $("wt-step").textContent = w.running ? `Running: ${w.step}…` : w.done && w.boot_ok === false && w.en_ok ? "A failed boot wire with a working reset wire usually means the BOOT pad is not the pin the firmware assumes, or that wire is loose." : "";
     $("wiretest").disabled = !!w.running;
   }
   async function pollWireTest() {
@@ -717,11 +1011,13 @@
     } catch { /* this host has no wiring test */ }
   }
   $("wiretest").addEventListener("click", async () => {
-    if (!confirm("Test the Node's reset (EN) and boot (BOOT) wires?\n\nThe Timer restarts the Node three times. Timing stops while it runs, which can take a few minutes.")) return;
+    if (!(await ask({ title: "Test the Node's reset and boot wires?", body: "The Timer restarts the Node three times. Timing stops while it runs, which can take a few minutes.", ok: "Run the test" }))) return;
     try { showWireTest(await json("/node/wiretest", { method: "POST" })); setTimeout(pollWireTest, 1000); }
-    catch (e) { msg("Could not start the wiring test: " + e.message); }
+    catch (e) { fail("Could not start the wiring test: " + e.message); }
   });
 
+  showPage();
+  setDirty(false);
   connect();
   draw();
 })();
