@@ -189,8 +189,10 @@ async fn seats_can_carry_their_own_threshold() {
     let r = client.put(&url).json(&v03).send().await.unwrap();
     assert_eq!(r.status(), 200);
     // It reads back with the default exit hold-off filled in.
+    // `seats_per_node` (dropped in v0.5) is accepted from older clients and not sent back.
     let mut expect = v03.clone();
     expect["exit_hold_ms"] = 100.into();
+    expect.as_object_mut().unwrap().remove("seats_per_node");
     assert_eq!(get(&url).await, expect);
     let inner = s.timer.inner.lock().unwrap();
     assert_eq!(inner.host.seat_threshold(1), None);

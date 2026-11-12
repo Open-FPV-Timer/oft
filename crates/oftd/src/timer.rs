@@ -107,7 +107,7 @@ fn host_temp_c() -> Option<f32> {
 
 fn plan_for(c: &Config) -> Plan {
     let mut p = Plan::with(0, 0, GAIN_AUTO);
-    for s in c.seats.iter().filter(|s| s.enabled).take(c.seats_per_node.max(1) as usize) {
+    for s in c.seats.iter().filter(|s| s.enabled) {
         let _ = p.push(s.seat, s.freq_mhz);
     }
     p
@@ -279,7 +279,7 @@ impl Timer {
                 "crossings": { "algorithms": ["edge_mid"], "replay": CROSSING_REPLAY, "fields": ["t_enter", "t_exit", "peak", "snr"] },
                 "samples.stream": { "rate_hz": 1000, "decimate": [1, 2, 5, 10, 20, 50] },
                 "samples.history": { "full_rate_s": HISTORY_S, "reduced_rate_s": 0, "reduced_hz": 0 },
-                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seats_per_node": true, "seat_thresholds": true, "exit_hold_ms": true },
+                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seat_thresholds": true, "exit_hold_ms": true },
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
             },
         })

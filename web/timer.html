@@ -511,7 +511,7 @@
     if (!seats.some((s) => s.seat === seat) && seats.length) seat = seats[0].seat;
     sel.value = seat;
     sel.hidden = seats.length < 2;
-    const maxSeats = Math.max(1, Math.min(8, config.seats_per_node || 8, ...((info && info.nodes) || []).map((n) => n.max_seats || 8)));
+    const maxSeats = Math.max(1, Math.min(8, ...((info && info.nodes) || []).map((n) => n.max_seats || 8)));
     const ns = $("nseats");
     ns.innerHTML = "";
     for (let n = 1; n <= Math.max(maxSeats, seats.length); n++) ns.add(new Option(String(n), String(n)));
@@ -628,7 +628,8 @@
       const own = caps().config && caps().config.seat_thresholds;
       const clean = (t) => { const { blank, ...rest } = t; return rest; };
       c.seats = draft.seats.map((s) => ({ seat: s.seat, freq_mhz: s.freq_mhz, enabled: true, ...(own && s.threshold ? { threshold: clean(s.threshold) } : {}) }));
-      c.seats_per_node = Math.max(c.seats_per_node || 8, c.seats.length);
+      // Timers before spec v0.5 have a seats_per_node cap; keep it out of the way.
+      if (c.seats_per_node != null) c.seats_per_node = Math.max(c.seats_per_node, c.seats.length);
       c.threshold = clean(draft.threshold);
       if (c.exit_hold_ms != null && draft.exit_hold_ms != null) c.exit_hold_ms = Math.round(draft.exit_hold_ms);
       c.min_lap_ms = Math.round(draft.min_lap_ms);

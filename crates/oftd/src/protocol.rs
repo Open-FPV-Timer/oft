@@ -37,7 +37,6 @@ impl From<&ThresholdConfig> for oft_core::Threshold {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub seats: Vec<SeatConfig>,
-    pub seats_per_node: u8,
     /// Timer-wide default; a seat's own `threshold` overrides it for that seat.
     pub threshold: ThresholdConfig,
     pub min_lap_ms: u32,
@@ -55,7 +54,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             seats: vec![SeatConfig { seat: 0, freq_mhz: 5800, enabled: true, threshold: None }],
-            seats_per_node: 8,
             threshold: ThresholdConfig::Auto { snr_enter: 150, hysteresis: 50 },
             min_lap_ms: 2000,
             exit_hold_ms: default_exit_hold_ms(),
