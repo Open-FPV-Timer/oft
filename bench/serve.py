@@ -40,6 +40,9 @@ FILES = {
     "oft-timer-netupdate.bin": BENCH / "fw" / "oft-timer-netupdate.bin",
     "oft-timer-fallback.uf2": BENCH / "fw" / "oft-timer-fallback.uf2",
     "oft-timer-noconsole.bin": BENCH / "fw" / "oft-timer-noconsole.bin",
+    "oft-timer-console.uf2": BENCH / "fw" / "oft-timer-console.uf2",
+    # The Node firmware the flasher at /node/ installs, for updating a Node through its Timer.
+    "oft-node-firmware.bin": NODE_UI / "firmware" / "esp32c5" / "firmware.bin",
     # Case for the protoboard build (oft-hardware/case-b1-proto, built by its build.sh).
     **{f"case/{n}": ROOT / "oft-hardware" / "case-b1-proto" / "out" / n
        for n in ("tray.stl", "cover.stl", "exploded.png", "assembly.png", "assembly-open.png", "assembly-pipe-side.png")},

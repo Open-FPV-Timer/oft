@@ -104,7 +104,11 @@
 <section>
   <h2>Settings <span class="small" id="persist-note">(not saved across a restart)</span></h2>
   <div class="row">
-    <label>Frequency, MHz <input type="number" id="freq" min="5000" max="6200" step="1"></label>
+    <label>Seats <select id="nseats" aria-label="Number of seats"></select></label>
+    <span class="small" id="seat-list"></span>
+  </div>
+  <div class="row">
+    <label><span id="freq-label">Frequency, MHz</span> <input type="number" id="freq" min="5000" max="6200" step="1"></label>
     <span class="small">Raceband: R1 5658, R2 5695, R3 5732, R4 5769, R5 5806, R6 5843, R7 5880, R8 5917</span>
   </div>
   <div class="row">
@@ -176,6 +180,21 @@
       <div class="small" style="margin-top:6px">Choose the <code>oft-timer.bin</code> written by <code>tools/uf2.py</code> (not the .uf2). The Timer stores it next to the firmware it is running, checks it, and restarts to try it. <b>Timing stops for the whole update</b>: while the file is stored (about half a minute) the Timer drops Node data, and then it restarts. The new firmware is on trial: if this page cannot reach it, the Timer restarts into the old firmware by itself within about a minute. Keep this page open until it reports the result.</div>
     </div>
   </div>
+  <div id="nodeup" hidden>
+    <h3 style="margin:14px 0 4px;font-size:1rem">Node firmware</h3>
+    <div class="row">
+      <label>New Node firmware <input type="file" id="nodeup-file" accept=".bin"></label>
+      <select id="nodeup-part" aria-label="Which part">
+        <option value="65536">firmware.bin (the usual update)</option>
+        <option value="8192">bootloader.bin</option>
+        <option value="32768">partitions.bin</option>
+      </select>
+      <button class="btn" id="nodeup-go" disabled>Update the Node…</button>
+    </div>
+    <progress id="nodeup-bar" max="100" value="0" hidden style="width:100%"></progress>
+    <div id="nodeup-state"></div>
+    <div class="small" style="margin-top:6px">The Timer restarts the Node into its bootloader and writes the file over the same wires the Node link uses (the reset and boot wires must be connected; the wiring test below checks them). <b>Timing stops</b> until the Node is back, a minute or two. If it fails part way, the Node stays silent until an update succeeds: try again, or use the Node's own USB port.</div>
+  </div>
   <div class="row" id="fw-actions" hidden>
     <button class="btn ghost" id="bootsel">Restart into USB update mode…</button>
     <button class="btn ghost" id="wiretest">Test the Node's reset and boot wires…</button>
@@ -232,6 +251,9 @@
     $("fw-actions").hidden = info.host !== "rp2350";
     if (info.host === "rp2350" && $("wt").hidden) pollWireTest();
     if (info.host === "rp2350" && !fwBusy) loadFwTimer();
+    const nodeUp = (((info.capabilities || {})["fw.update"] || {}).nodes || []).includes("uart");
+    $("nodeup").hidden = !nodeUp;
+    if (nodeUp && !nodeBusy) pollNodeFlash(false);
     const caps = info.capabilities || {};
     const persist = !!(caps.config && caps.config.persist);
     $("persist").hidden = !persist;
@@ -261,6 +283,13 @@
     if (!seats.some((s) => s.seat === seat) && seats.length) seat = seats[0].seat;
     sel.value = seat;
     sel.hidden = seats.length < 2;
+    const maxSeats = Math.max(1, Math.min(8, config.seats_per_node || 8, ...((info && info.nodes) || []).map((n) => n.max_seats || 8)));
+    const ns = $("nseats");
+    ns.innerHTML = "";
+    for (let n = 1; n <= Math.max(maxSeats, seats.length); n++) ns.add(new Option(String(n), String(n)));
+    ns.value = String(Math.max(1, seats.length));
+    $("seat-list").textContent = seats.length > 1 ? seats.map((s) => `seat ${s.seat}: ${s.freq_mhz}`).join(" · ") + ". Pick a seat next to the Signal heading to change it." : "One seat. Race software sees one seat per pilot it can time.";
+    $("freq-label").textContent = seats.length > 1 ? `Frequency of seat ${seat}, MHz` : "Frequency, MHz";
     const sc = seatConfig();
     if (sc) $("freq").value = sc.freq_mhz;
     const t = (sc && sc.threshold) || config.threshold;
@@ -276,6 +305,7 @@
   async function loadConfig() { config = await json("/config"); if (!dirty) showConfig(); }
 
   for (const id of ["freq", "th-a", "th-b", "hold", "minlap"]) $(id).addEventListener("input", () => { dirty = true; });
+  $("nseats").addEventListener("change", () => { dirty = true; });
   $("thmode").addEventListener("change", () => {
     dirty = true;
     thLabels();
@@ -296,8 +326,26 @@
     try {
       const c = await json("/config");
       const th = manual ? { mode: "manual", enter: a, exit: b } : { mode: "auto", snr_enter: a, hysteresis: b };
+      // Seats: keep the lowest-numbered ones when fewer are wanted; new ones take the first
+      // free seat number and the first Raceband channel not in use.
+      const want = Number($("nseats").value) || 1;
+      let seats = (c.seats || []).filter((s) => s.enabled).sort((a, b) => a.seat - b.seat);
+      const before = seats.length;
+      if (want !== before) {
+        seats = seats.slice(0, want);
+        const raceband = [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917];
+        for (let n = 0; seats.length < want && n < 8; n++) {
+          if (seats.some((s) => s.seat === n)) continue;
+          const freq = raceband.find((r) => !seats.some((s) => s.freq_mhz === r) && !(n !== seat && r === f)) || raceband[n];
+          seats.push({ seat: n, freq_mhz: freq, enabled: true });
+        }
+        c.seats = seats.sort((a, b) => a.seat - b.seat);
+        c.seats_per_node = Math.max(c.seats_per_node || 8, want);
+      }
       const sc = (c.seats || []).find((s) => s.seat === seat);
       if (sc) sc.freq_mhz = f;
+      const dup = (c.seats || []).filter((s) => s.enabled).map((s) => s.freq_mhz).find((x, i, a) => a.indexOf(x) !== i);
+      if (dup) return msg(`Two seats would both be on ${dup} MHz. Give each seat its own frequency.`);
       // A seat that has its own levels keeps having its own; otherwise change the Timer-wide ones.
       if (sc && sc.threshold) sc.threshold = th; else c.threshold = th;
       if (c.exit_hold_ms != null && $("hold").value !== "") c.exit_hold_ms = Math.max(0, Math.min(1000, Math.round(Number($("hold").value))));
@@ -305,7 +353,7 @@
       config = await json("/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
       dirty = false;
       showConfig();
-      msg("Settings applied.");
+      msg(want !== before ? `Settings applied. The Timer now has ${want} seat${want > 1 ? "s" : ""}; detection restarted.` : "Settings applied.");
       if (!$("persist").hidden) loadSaveState();
     } catch (e) { msg("Could not apply: " + e.message); }
   });
@@ -543,6 +591,54 @@
     const state = f.state === "trial" ? " It is on trial after an update and has not confirmed itself yet." : f.state === "restarting" ? " It is about to restart into new firmware." : "";
     $("fwup-now").textContent = `Running ${buildText(f.build)} from slot ${f.slot}.${state} ${other}`;
   }
+  // ---------------------------------------------------------------- Node firmware
+  let nodeBusy = false;
+  const nodeState = (text, cls) => { $("nodeup-state").innerHTML = ""; const e = document.createElement("span"); e.className = cls ? "pill " + cls : "small"; e.textContent = text; $("nodeup-state").append(e); };
+  function showNodeFlash(f) {
+    const bar = $("nodeup-bar");
+    if (f.running) {
+      bar.hidden = false;
+      bar.value = f.bytes ? Math.round((100 * f.written) / f.bytes) : 0;
+      nodeState(`Updating the Node: ${f.step}` + (f.step === "writing" ? ` (${Math.round(f.written / 1024)} of ${Math.round(f.bytes / 1024)} KB)` : "") + "…");
+    } else if (f.done) {
+      bar.hidden = true;
+      if (f.ok) nodeState(`Node updated in ${f.seconds} s: ${Math.round(f.bytes / 1024)} KB written and checked. ` + (f.returned ? "The Node is back on the link." : "The Node has not come back on the link yet."), f.returned ? "ok" : "bad");
+      else nodeState(`Node update failed after ${f.seconds} s: ${f.error}. ` + (f.returned ? "The Node restarted with what it had." : "The Node is not answering; run the update again."), "bad");
+    }
+    return f.running;
+  }
+  async function pollNodeFlash(keepGoing) {
+    try {
+      const running = showNodeFlash(await json("/fw/node"));
+      if (running || keepGoing) { nodeBusy = running; $("nodeup-go").disabled = running || !$("nodeup-file").files.length; }
+      if (running) setTimeout(() => pollNodeFlash(true), 700);
+      else if (keepGoing) loadInfo().catch(() => {});
+    } catch { if (keepGoing) setTimeout(() => pollNodeFlash(true), 1500); }
+  }
+  $("nodeup-file").addEventListener("change", () => {
+    const f = $("nodeup-file").files[0];
+    if (f) { const n = f.name.toLowerCase(); $("nodeup-part").value = n.includes("bootloader") ? "8192" : n.includes("partition") ? "32768" : "65536"; }
+    $("nodeup-go").disabled = nodeBusy || !f;
+  });
+  $("nodeup-go").addEventListener("click", async () => {
+    const file = $("nodeup-file").files[0];
+    if (!file || nodeBusy) return;
+    const part = $("nodeup-part").selectedOptions[0].textContent;
+    if (!confirm(`Write ${file.name} (${Math.round(file.size / 1024)} KB) to the Node as ${part}?\n\nTiming stops until the Node is back, a minute or two.`)) return;
+    nodeBusy = true; $("nodeup-go").disabled = true;
+    nodeState("Sending the file to the Timer…");
+    try {
+      const r = await fetch(`${API}/fw/node?offset=${$("nodeup-part").value}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      showNodeFlash(body);
+      setTimeout(() => pollNodeFlash(true), 500);
+    } catch (e) {
+      nodeBusy = false; $("nodeup-go").disabled = false;
+      nodeState("Could not start the Node update: " + e.message, "bad");
+    }
+  });
+
   async function loadFwTimer() {
     try { showFwTimer(await fwTimer(3000)); } catch { $("fwup").hidden = true; /* this firmware has no network update */ }
   }
