@@ -40,6 +40,7 @@
   .tile { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0; }
   .tile b { display: block; font-size: 0.75rem; color: var(--muted); font-weight: 600; }
   .tile span { overflow-wrap: anywhere; }
+  [hidden] { display: none !important; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
   .btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 6px; padding: 7px 13px; font: inherit; font-weight: 600; cursor: pointer; }
   .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
@@ -72,6 +73,7 @@
     <div class="tile"><b>Sample rate</b><span id="s-rate">-</span></div>
     <div class="tile"><b>Uptime</b><span id="s-up">-</span></div>
     <div class="tile"><b>Node temperature</b><span id="s-temp">-</span></div>
+    <div class="tile"><b>Timer temperature</b><span id="s-ttemp">-</span></div>
     <div class="tile"><b>Clients</b><span id="s-clients">-</span></div>
   </div>
 </section>
@@ -100,7 +102,7 @@
 </section>
 
 <section>
-  <h2>Settings <span class="small">(not saved across a restart)</span></h2>
+  <h2>Settings <span class="small" id="persist-note">(not saved across a restart)</span></h2>
   <div class="row">
     <label>Frequency, MHz <input type="number" id="freq" min="5000" max="6200" step="1"></label>
     <span class="small">Raceband: R1 5658, R2 5695, R3 5732, R4 5769, R5 5806, R6 5843, R7 5880, R8 5917</span>
@@ -119,7 +121,36 @@
     <button class="btn" id="apply">Apply</button>
     <button class="btn ghost" id="reload">Reload from Timer</button>
   </div>
-  <div class="small">Applying restarts detection for every seat. Levels use the same dB scale as the chart.</div>
+  <div class="small">Levels, hold-off and minimum lap apply at once. Changing the frequency restarts detection. Levels use the same dB scale as the chart.</div>
+  <div class="row" id="persist" hidden>
+    <button class="btn" id="save-default">Save as power-on settings</button>
+    <button class="btn ghost" id="forget-default">Forget saved settings</button>
+    <span class="small" id="persist-state"></span>
+  </div>
+</section>
+
+<section id="net" hidden>
+  <h2>Network <span class="small">(takes effect when the Timer restarts)</span></h2>
+  <div class="small" id="net-now"></div>
+  <div class="row">
+    <select id="net-mode" aria-label="Address mode">
+      <option value="dhcp">Automatic (DHCP)</option>
+      <option value="static">Fixed address</option>
+    </select>
+    <label class="net-static">Address <input type="text" id="net-addr" placeholder="192.168.1.50" size="15"></label>
+    <label class="net-static">Mask <select id="net-prefix">
+      <option value="24">255.255.255.0 (/24)</option>
+      <option value="23">255.255.254.0 (/23)</option>
+      <option value="22">255.255.252.0 (/22)</option>
+      <option value="16">255.255.0.0 (/16)</option>
+    </select></label>
+    <label class="net-static">Gateway (optional) <input type="text" id="net-gw" placeholder="192.168.1.1" size="15"></label>
+  </div>
+  <div class="row">
+    <button class="btn" id="net-save">Save network settings</button>
+    <button class="btn ghost" id="restart">Restart the Timer</button>
+  </div>
+  <div class="small">If a fixed address makes the Timer unreachable: fit a jumper between header pins 12 (GP9) and 13 (GND), power it up, and it uses DHCP for that start.</div>
 </section>
 
 <section>
@@ -197,11 +228,17 @@
     document.title = `${info.id} · OFT Timer`;
     $("ident").textContent = `${info.id} · ${info.host} · protocol ${info.proto} · level ${info.level}`;
     const nodes = (info.nodes || []).map((n) => `Node ${n.id} (${n.chip}, firmware ${n.fw}, ${n.link}, ${n.range_mhz ? n.range_mhz.join("–") + " MHz" : ""})`);
-    $("fw").textContent = `Timer firmware ${info.fw} on ${info.host}. ` + (nodes.length ? nodes.join("; ") + "." : "No Node has introduced itself yet.");
+    $("fw").textContent = `Timer firmware ${info.fw} on ${info.host}` + ((info.capabilities || {})["usb.console"] ? ", with the USB serial console. " : ". ") + (nodes.length ? nodes.join("; ") + "." : "No Node has introduced itself yet.");
     $("fw-actions").hidden = info.host !== "rp2350";
     if (info.host === "rp2350" && $("wt").hidden) pollWireTest();
     if (info.host === "rp2350" && !fwBusy) loadFwTimer();
-    if (bootId && bootId !== info.boot_id) { msg("The Timer restarted; settings are back to their defaults."); resetData(); dirty = false; await loadConfig(); }
+    const caps = info.capabilities || {};
+    const persist = !!(caps.config && caps.config.persist);
+    $("persist").hidden = !persist;
+    $("net").hidden = !caps.network;
+    if (persist) loadSaveState(); else $("persist-note").textContent = "(not saved across a restart)";
+    if (caps.network && !netDirty) loadNetwork();
+    if (bootId && bootId !== info.boot_id) { msg(persist ? "The Timer restarted." : "The Timer restarted; settings are back to their defaults."); resetData(); dirty = false; await loadConfig(); }
     bootId = info.boot_id;
   }
 
@@ -268,8 +305,65 @@
       config = await json("/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
       dirty = false;
       showConfig();
-      msg("Settings applied. Detection has restarted.");
+      msg("Settings applied.");
+      if (!$("persist").hidden) loadSaveState();
     } catch (e) { msg("Could not apply: " + e.message); }
+  });
+
+  // ---------------------------------------------------------------- saved settings, network
+  function showSaveState(s) {
+    $("persist-note").textContent = s.current_is_saved ? "(saved: the Timer starts with these)" : s.saved ? "(changed since the last save)" : "(not saved yet: a restart goes back to the defaults)";
+    $("persist-state").textContent = s.current_is_saved ? "The settings in use are the saved ones." : s.saved ? "The Timer would start with the older saved settings." : "Nothing is saved.";
+    $("forget-default").disabled = !s.saved;
+  }
+  async function loadSaveState() { try { showSaveState(await json("/config/save")); } catch { /* older firmware */ } }
+  $("save-default").addEventListener("click", async () => {
+    if (dirty && !confirm("You have changes that are not applied yet. Save the settings the Timer is using now, without them?")) return;
+    try { showSaveState(await json("/config/save", { method: "POST" })); msg("Saved. The Timer will start with these settings."); }
+    catch (e) { msg("Could not save: " + e.message); }
+  });
+  $("forget-default").addEventListener("click", async () => {
+    if (!confirm("Forget the saved settings? The Timer will start with its built-in defaults. The settings in use now do not change.")) return;
+    try { showSaveState(await json("/config/save", { method: "DELETE" })); msg("Saved settings forgotten."); }
+    catch (e) { msg("Could not forget: " + e.message); }
+  });
+
+  let netDirty = false;
+  function netFields() { for (const e of document.querySelectorAll(".net-static")) e.hidden = $("net-mode").value !== "static"; }
+  function showNetwork(n) {
+    const now = n.now ? `${n.now.address}/${n.now.prefix}` + (n.now.gateway ? `, gateway ${n.now.gateway}` : "") : "no address yet";
+    const how = { dhcp: "from DHCP", static: "fixed", "dhcp (recovery jumper)": "from DHCP, because the recovery jumper is fitted" }[n.using] || n.using;
+    $("net-now").textContent = `Address now: ${now} (${how}).` + (n.restart_needed ? " The saved settings differ and apply at the next restart." : "");
+    if (netDirty) return;
+    $("net-mode").value = n.saved.mode;
+    $("net-addr").value = n.saved.address || (n.now ? n.now.address : "");
+    const p = String(n.saved.prefix || (n.now ? n.now.prefix : 24));
+    if (![...$("net-prefix").options].some((o) => o.value === p)) $("net-prefix").add(new Option(`/${p}`, p));
+    $("net-prefix").value = p;
+    $("net-gw").value = n.saved.gateway || (n.saved.mode === "dhcp" && n.now && n.now.gateway ? n.now.gateway : "");
+    netFields();
+  }
+  async function loadNetwork() { try { showNetwork(await json("/network")); } catch { /* older firmware */ } }
+  for (const id of ["net-addr", "net-gw"]) $(id).addEventListener("input", () => { netDirty = true; });
+  for (const id of ["net-mode", "net-prefix"]) $(id).addEventListener("change", () => { netDirty = true; netFields(); });
+  $("net-save").addEventListener("click", async () => {
+    const isStatic = $("net-mode").value === "static";
+    const ip = (v) => /^\d{1,3}(\.\d{1,3}){3}$/.test(v) && v.split(".").every((x) => Number(x) <= 255);
+    const addr = $("net-addr").value.trim(), gw = $("net-gw").value.trim();
+    if (isStatic && !ip(addr)) return msg("Address must look like 192.168.1.50.");
+    if (isStatic && gw && !ip(gw)) return msg("Gateway must look like 192.168.1.1, or be left empty.");
+    const body = isStatic ? { mode: "static", address: addr, prefix: Number($("net-prefix").value), ...(gw ? { gateway: gw } : {}) } : { mode: "dhcp" };
+    if (isStatic && !confirm(`Save the fixed address ${addr}?\n\nAfter the next restart the Timer answers only at http://${addr}:${location.port || 7270}/. If that address is wrong for your network you will need the recovery jumper to get back in.`)) return;
+    try {
+      netDirty = false;
+      showNetwork(await json("/network", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+      msg("Network settings saved. Restart the Timer to use them.");
+    } catch (e) { netDirty = true; msg("Could not save network settings: " + e.message); }
+  });
+  $("restart").addEventListener("click", async () => {
+    if (!confirm("Restart the Timer now? Timing stops for a few seconds, and settings that are not saved are lost.")) return;
+    try { await json("/restart", { method: "POST" }); msg("The Timer is restarting. If its address changes, open the new address."); }
+    catch (e) { msg("Could not restart: " + e.message); }
   });
 
   // ---------------------------------------------------------------- status
@@ -290,6 +384,7 @@
     const up = st.uptime_s;
     $("s-up").textContent = up >= 3600 ? `${Math.floor(up / 3600)} h ${Math.floor((up % 3600) / 60)} min` : up >= 60 ? `${Math.floor(up / 60)} min ${up % 60} s` : `${up} s`;
     $("s-temp").textContent = st.temp_c ? `${st.temp_c.toFixed(0)} °C` : "not reported";
+    $("s-ttemp").textContent = st.timer_temp_c ? `${st.timer_temp_c.toFixed(0)} °C` : "not reported";
     $("s-clients").textContent = st.clients == null ? "-" : st.clients;
     $("s-sig").textContent = s && s.rssi != null && s.floor != null
       ? `now ${db(s.rssi)}, floor ${db(s.floor)}, ${((s.rssi - s.floor) / 10).toFixed(1)} dB above floor; enter ${db(s.enter)}, exit ${db(s.exit)}`

@@ -214,7 +214,7 @@ pub struct Pong {
 /// Node → Timer, periodic. Body: `temp_dc:i16 hop_errors:u16 overruns:u16 gain_index:u8`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Status {
-    /// Temperature in 0.1 °C.
+    /// Temperature in 0.1 °C. `i16::MIN` = no reading.
     pub temp_dc: i16,
     pub hop_errors: u16,
     pub overruns: u16,

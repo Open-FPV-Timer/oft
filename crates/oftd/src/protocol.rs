@@ -156,7 +156,10 @@ pub struct StatusJson {
     pub kind: &'static str,
     pub uptime_s: u64,
     pub time_us: u64,
+    /// The Node's chip temperature.
     pub temp_c: Option<f32>,
+    /// The Timer host's own temperature.
+    pub timer_temp_c: Option<f32>,
     pub dropped: u32,
     pub clock_err_us: Option<f64>,
     pub clock_synced: bool,

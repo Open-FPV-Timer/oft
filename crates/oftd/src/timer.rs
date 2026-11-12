@@ -99,6 +99,12 @@ fn apply_detection(host: &mut NodeHost, c: &Config) {
     }
 }
 
+/// This machine's temperature where Linux reports one (a Raspberry Pi does), else `None`.
+fn host_temp_c() -> Option<f32> {
+    let milli: f32 = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp").ok()?.trim().parse().ok()?;
+    Some(milli / 1000.0)
+}
+
 fn plan_for(c: &Config) -> Plan {
     let mut p = Plan::with(0, 0, GAIN_AUTO);
     for s in c.seats.iter().filter(|s| s.enabled).take(c.seats_per_node.max(1) as usize) {
@@ -153,19 +159,27 @@ impl Timer {
         }
     }
 
-    /// Apply a new `/config`: re-plan the Node and reset detectors.
+    /// Apply a new `/config`. Detection settings take effect at once. Only a change of seats
+    /// or frequencies re-plans the Node: that restarts its sample stream and resets the
+    /// detectors, so a change of levels alone must not do it.
     pub fn set_config(&self, config: Config) {
         let plan = plan_for(&config);
-        {
+        let replan = {
             let mut inner = self.inner.lock().unwrap();
             apply_detection(&mut inner.host, &config);
-            inner.host.set_plan(plan);
-            inner.config = config;
-            for h in inner.history.iter_mut() {
-                *h = None;
+            let replan = inner.host.plan() != Some(&plan);
+            if replan {
+                inner.host.set_plan(plan);
+                for h in inner.history.iter_mut() {
+                    *h = None;
+                }
             }
+            inner.config = config;
+            replan
+        };
+        if replan {
+            self.send_to_node(&Message::Plan(plan));
         }
-        self.send_to_node(&Message::Plan(plan));
     }
 
     /// Crossings after `since` (exclusive), oldest first.
@@ -216,6 +230,7 @@ impl Timer {
             uptime_s: self.uptime_s(),
             time_us: self.now_us(),
             temp_c: inner.node_temp_dc.map(|t| t as f32 / 10.0),
+            timer_temp_c: host_temp_c(),
             dropped: inner.host.dropped_samples,
             clock_err_us: clock.is_synced().then(|| clock.residual_us()),
             clock_synced: clock.is_synced(),
@@ -349,7 +364,8 @@ impl Timer {
                                 let _ = self.events.send(Outgoing::Crossing(CrossingJson::new(seq, &c)));
                             }
                             Event::Status(s) => {
-                                *node_temp_dc = Some(s.temp_dc);
+                                // i16::MIN = the Node has no reading; 0 = Node firmware before it had a sensor.
+                                *node_temp_dc = (s.temp_dc != i16::MIN && s.temp_dc != 0).then_some(s.temp_dc);
                                 *node_status = Some(s);
                             }
                             Event::Synced => {}

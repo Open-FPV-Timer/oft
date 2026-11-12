@@ -39,6 +39,10 @@ FILES = {
     "oft-timer-netupdate.uf2": BENCH / "fw" / "oft-timer-netupdate.uf2",
     "oft-timer-netupdate.bin": BENCH / "fw" / "oft-timer-netupdate.bin",
     "oft-timer-fallback.uf2": BENCH / "fw" / "oft-timer-fallback.uf2",
+    "oft-timer-noconsole.bin": BENCH / "fw" / "oft-timer-noconsole.bin",
+    # Case for the protoboard build (oft-hardware/case-b1-proto, built by its build.sh).
+    **{f"case/{n}": ROOT / "oft-hardware" / "case-b1-proto" / "out" / n
+       for n in ("tray.stl", "cover.stl", "exploded.png", "assembly.png", "assembly-open.png", "assembly-pipe-side.png")},
 }
 TIMER_PORT = 7270
 # What the page may ask a Timer for.
