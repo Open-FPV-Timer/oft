@@ -21,6 +21,13 @@ target/debug/oftd --fake                     # simulated Node, serves on 0.0.0.0
 target/debug/oftd --serial /dev/ttyACM0      # real Node
 ```
 
+`--fake` is the mock Timer for testing race software without hardware. It starts with one
+seat; set up to 8 with `PUT /oft/v1/config` (or on its page, `http://localhost:7270/`) and
+every seat gets its own simulated pilot. Seat 0 laps every `--fake-lap-s` seconds (default
+8), each further seat `--fake-lap-spread` percent slower (default 4), and each lap varies
+by up to `--fake-lap-jitter-s` (default 0.3). The laps are the same on every run. As with
+a real Node, the seats share its sample rate: 1000 samples/s with one seat, 125 with eight.
+
 `oftd` advertises itself over mDNS as `<id>._oft._tcp.local.` (spec §6.1); `--no-mdns` turns
 that off, `--id` sets the id. `cargo test -p oftd --test api mdns -- --ignored` checks the
 advertisement on a host with multicast.

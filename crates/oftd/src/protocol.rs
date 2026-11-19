@@ -44,6 +44,10 @@ pub struct Config {
     /// ends. Absent (older clients) means the default.
     #[serde(default = "default_exit_hold_ms")]
     pub exit_hold_ms: u32,
+    /// Pass window: crossings that start within this long of the first one are one pass,
+    /// and only the strongest is reported, once the window has closed. 0 (and absent) = off.
+    #[serde(default)]
+    pub pass_window_ms: u32,
 }
 
 pub fn default_exit_hold_ms() -> u32 {
@@ -57,6 +61,7 @@ impl Default for Config {
             threshold: ThresholdConfig::Auto { snr_enter: 150, hysteresis: 50 },
             min_lap_ms: 2000,
             exit_hold_ms: default_exit_hold_ms(),
+            pass_window_ms: 0,
         }
     }
 }

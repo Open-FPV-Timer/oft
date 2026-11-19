@@ -62,6 +62,28 @@ pub struct Repeat {
     pub first_us: u64,
     pub period_us: u64,
     pub pass: Pass,
+    /// Each repetition is moved by up to this much either way (at most a quarter of the
+    /// period), so laps are not all the same length. The shift is fixed by `seed` and the
+    /// repetition number: same seed, same laps.
+    pub jitter_us: u64,
+    pub seed: u64,
+}
+
+impl Repeat {
+    /// Centre of repetition `k`.
+    pub fn center(&self, k: u64) -> u64 {
+        let base = self.first_us + k * self.period_us;
+        let j = self.jitter_us.min(self.period_us / 4);
+        if j == 0 {
+            return base;
+        }
+        // splitmix64 of (seed, k): a fixed shift in [-j, +j].
+        let mut x = self.seed.wrapping_add(k.wrapping_mul(0x9E37_79B9_7F4A_7C15)).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^= x >> 31;
+        (base + x % (2 * j + 1)).saturating_sub(j)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +128,7 @@ impl Scene {
                 // The nearest repetition and its neighbours cover any overlap.
                 let k = (t.saturating_sub(r.first_us) + r.period_us / 2) / r.period_us;
                 for kk in k.saturating_sub(1)..=k + 1 {
-                    p += pass_db(&r.pass, r.first_us + kk * r.period_us, t);
+                    p += pass_db(&r.pass, r.center(kk), t);
                 }
             }
         }
@@ -117,12 +139,14 @@ impl Scene {
     pub fn repeat_centers(&self, from: u64, to: u64) -> Vec<u64> {
         let Some(r) = &self.repeat else { return Vec::new() };
         let mut out = Vec::new();
-        let mut c = r.first_us;
-        while c <= to {
-            if c >= from {
+        let reach = r.jitter_us.min(r.period_us / 4);
+        let mut k = 0;
+        while r.first_us + k * r.period_us <= to + reach {
+            let c = r.center(k);
+            if c >= from && c <= to {
                 out.push(c);
             }
-            c += r.period_us;
+            k += 1;
         }
         out
     }

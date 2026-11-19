@@ -147,7 +147,7 @@ fn print_margins() {
 fn repeating_pass_is_detected_every_period_for_a_long_run() {
     use oft_sim::Repeat;
     let scene = Scene {
-        repeat: Some(Repeat { first_us: 2_000_000, period_us: 3_000_000, pass: Pass { center_us: 0, height_db: 36.0, width_us: 130_000.0, dip: 0.4 } }),
+        repeat: Some(Repeat { first_us: 2_000_000, period_us: 3_000_000, pass: Pass { center_us: 0, height_db: 36.0, width_us: 130_000.0, dip: 0.4 }, jitter_us: 0, seed: 0 }),
         ..Scene::default()
     };
     // 10 minutes of signal: 200 passes, evaluated in O(1) each.

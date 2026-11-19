@@ -28,3 +28,21 @@ with these settings reports the same 14 and nothing for the 8 near misses. Two o
 (555.1 and 560.1) are above the enter level for 5 and 10 ms in the raw signal; only the
 smoothing keeps them out. The gap between the weakest low pass and the strongest skim is
 about 1 dB, so this recording is a hard case, not a comfortable one.
+
+## whoop-race-track-2026-11-15.jsonl.gz
+
+The same whoop and Timer on a RaceGOW practice track, two races (Timer time 5540 to 6000 s),
+same settings as above. The track passes close by the gate about 1.6 s before going
+through it, so most laps show two bumps: a fly-by of 20 to 22 dB over the floor, then the
+real pass at 25 to 31 dB.
+
+- Where the fly-by reaches the enter level it is counted as the lap and the real pass is
+  then inside the minimum lap: laps at 5583.130, 5821.476 and 5905.130 s are 0.5 to 0.75 s
+  early. With a pass window of 2500 ms they move to 5583.753, 5822.228 and 5905.627 s (the
+  real passes) and every other lap is unchanged.
+- The first pass of the second race (about 5805.3 s) peaks 19.8 dB over the floor and is
+  not counted at 22 dB.
+
+Replay either file through the detector with
+`cargo run -p oftd --example replay -- <file.jsonl> [snr_enter] [hysteresis] [min_lap_ms] [exit_hold_ms] [from_s] [to_s] [pass_window_ms]`
+(unpack it first).

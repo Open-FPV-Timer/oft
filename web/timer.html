@@ -209,6 +209,7 @@
   <div class="row">
     <label class="field" id="hold-wrap"><span>Exit hold-off, ms <button type="button" class="tip" data-tip="How long the signal must stay below the exit level before the crossing ends. Stops one pass with a dip in the middle from counting twice. 0 to 1000." aria-label="Help">?</button></span><input type="number" id="hold" min="0" max="1000" step="10"></label>
     <label class="field"><span>Minimum lap, ms <button type="button" class="tip" data-tip="Crossings closer together than this on one seat are ignored." aria-label="Help">?</button></span><input type="number" id="minlap" min="0" max="600000" step="100"></label>
+    <label class="field" id="window-wrap"><span>Pass window, ms <button type="button" class="tip" data-tip="For tracks that pass close to the gate just before going through it. Spikes that start within this time of the first one count as one pass, and the strongest one is the lap. The lap is reported once the window has closed, so it shows up this much later; its time is not affected. 0 switches it off. 0 to 10000." aria-label="Help">?</button></span><input type="number" id="window" min="0" max="10000" step="100"></label>
   </div>
 </section>
 
@@ -519,6 +520,8 @@
     $("hold-wrap").hidden = config.exit_hold_ms == null;
     if (config.exit_hold_ms != null) $("hold").value = config.exit_hold_ms;
     $("minlap").value = config.min_lap_ms;
+    $("window-wrap").hidden = config.pass_window_ms == null;
+    if (config.pass_window_ms != null) $("window").value = config.pass_window_ms;
     renderSeats();
   }
 
@@ -606,6 +609,7 @@
   $("th-unset").addEventListener("click", () => { const s = draftSeat(scope); if (s) delete s.threshold; setDirty(true); renderSeats(); });
   $("hold").addEventListener("input", () => { draft.exit_hold_ms = $("hold").value === "" ? null : Number($("hold").value); setDirty(true); });
   $("minlap").addEventListener("input", () => { draft.min_lap_ms = $("minlap").value === "" ? null : Number($("minlap").value); setDirty(true); });
+  $("window").addEventListener("input", () => { draft.pass_window_ms = $("window").value === "" ? 0 : Number($("window").value); setDirty(true); });
   $("seat").addEventListener("change", () => { seat = Number($("seat").value); });
   $("reload").addEventListener("click", async () => { setDirty(false); try { await loadConfig(); note("Changes discarded."); } catch (e) { fail("Could not read settings: " + e.message); } });
 
@@ -623,6 +627,7 @@
     if (e) return fail(e);
     if (draft.exit_hold_ms != null && !(draft.exit_hold_ms >= 0 && draft.exit_hold_ms <= 1000)) return fail("Exit hold-off must be 0 to 1000 ms.");
     if (!(draft.min_lap_ms >= 0)) return fail("Fill in the minimum lap.");
+    if (draft.pass_window_ms != null && !(draft.pass_window_ms >= 0 && draft.pass_window_ms <= 10000)) return fail("Pass window must be 0 to 10000 ms.");
     try {
       const c = await json("/config"), before = (c.seats || []).filter((s) => s.enabled).length;
       const own = caps().config && caps().config.seat_thresholds;
@@ -633,6 +638,7 @@
       c.threshold = clean(draft.threshold);
       if (c.exit_hold_ms != null && draft.exit_hold_ms != null) c.exit_hold_ms = Math.round(draft.exit_hold_ms);
       c.min_lap_ms = Math.round(draft.min_lap_ms);
+      if (c.pass_window_ms != null && draft.pass_window_ms != null) c.pass_window_ms = Math.round(draft.pass_window_ms);
       config = await json("/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
       setDirty(false);
       showConfig();

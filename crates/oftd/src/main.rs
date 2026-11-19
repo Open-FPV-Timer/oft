@@ -16,9 +16,16 @@ struct Args {
     /// Run against a simulated Node instead of hardware.
     #[arg(long)]
     fake: bool,
-    /// Fake Node: seconds between synthetic passes (0 = none).
+    /// Fake Node: seconds between synthetic passes for the pilot on seat 0 (0 = none).
     #[arg(long, default_value_t = 8.0)]
     fake_lap_s: f64,
+    /// Fake Node: every seat has its own pilot; each is this many percent slower than the
+    /// seat before it.
+    #[arg(long, default_value_t = 4.0)]
+    fake_lap_spread: f64,
+    /// Fake Node: each lap is up to this many seconds shorter or longer than the pilot's usual.
+    #[arg(long, default_value_t = 0.3)]
+    fake_lap_jitter_s: f64,
     /// Fake Node: pass height above the floor, dB.
     #[arg(long, default_value_t = 36.0)]
     fake_height_db: f64,
@@ -40,16 +47,25 @@ struct Args {
 async fn main() {
     let args = Args::parse();
     let link: Box<dyn oftd::link::NodeLink> = if args.fake {
-        let mut scene = Scene::default();
-        if args.fake_lap_s > 0.0 {
-            scene.repeat = Some(Repeat {
-                first_us: 2_000_000,
-                period_us: (args.fake_lap_s * 1e6) as u64,
-                pass: Pass { center_us: 0, height_db: args.fake_height_db, width_us: 130_000.0, dip: 0.4 },
-            });
-        }
         // Fake Node booted 1.5 s before us and runs 30 ppm fast.
-        Box::new(FakeLink(FakeNode::new(scene, NodeClock { offset_us: -1_500_000, ppm: 30.0 }, 42)))
+        let mut node = FakeNode::new(Scene::default(), NodeClock { offset_us: -1_500_000, ppm: 30.0 }, 42);
+        if args.fake_lap_s > 0.0 {
+            // One pilot per seat: seat 0 laps every `fake_lap_s`, each further seat a little
+            // slower, and they come through the gate 0.4 s apart at the start.
+            for seat in 0..8u8 {
+                let period = args.fake_lap_s * (1.0 + args.fake_lap_spread.max(0.0) / 100.0 * seat as f64);
+                let mut scene = Scene::default();
+                scene.repeat = Some(Repeat {
+                    first_us: 2_000_000 + seat as u64 * 400_000,
+                    period_us: (period * 1e6) as u64,
+                    pass: Pass { center_us: 0, height_db: args.fake_height_db, width_us: 130_000.0, dip: 0.4 },
+                    jitter_us: (args.fake_lap_jitter_s.max(0.0) * 1e6) as u64,
+                    seed: 1000 + seat as u64,
+                });
+                node.set_seat_scene(seat, scene);
+            }
+        }
+        Box::new(FakeLink(node))
     } else if let Some(port) = args.serial {
         match oftd::serial::SerialLink::open(&port, args.baud) {
             Ok(l) => Box::new(l),

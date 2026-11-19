@@ -37,6 +37,12 @@ pub struct Config {
     /// 0 ends it on the first sample below. The crossing is reported this much later;
     /// its timestamps are not affected.
     pub exit_hold_us: u64,
+    /// Pass window: crossings that start within this many µs of the first one are taken
+    /// as one pass, and only the strongest is reported (for tracks that come close to the
+    /// gate just before going through it). The pass is reported once the window has
+    /// closed, so this much later; its timestamps are not affected. 0 = off: every
+    /// crossing is reported as it ends.
+    pub pass_window_us: u64,
 }
 
 impl Default for Config {
@@ -47,6 +53,7 @@ impl Default for Config {
             smooth_shift: 2,
             low_snr: 100,
             exit_hold_us: 100_000,
+            pass_window_us: 0,
         }
     }
 }
@@ -103,6 +110,8 @@ pub struct Detector {
     /// level, if the trace is below it now.
     below_since: Option<u64>,
     flags: CrossingFlags,
+    /// Pass window: the strongest crossing so far and when the window closes.
+    pending: Option<(Crossing, u64)>,
 }
 
 impl Detector {
@@ -131,6 +140,7 @@ impl Detector {
             floor_at_enter: 0,
             below_since: None,
             flags: CrossingFlags::empty(),
+            pending: None,
         }
     }
 
@@ -188,6 +198,35 @@ impl Detector {
     /// hole inside a pass neither splits it nor shifts its timestamps. A longer outage ends
     /// a crossing in progress as `TRUNCATED`.
     pub fn push(&mut self, t: u64, power: i16, flags: SampleFlags) -> Option<Crossing> {
+        let ended = self.push_sample(t, power, flags);
+        if self.cfg.pass_window_us == 0 {
+            // A window switched off with a pass waiting: report the pass now.
+            return match (self.pending.take(), ended) {
+                (Some((p, _)), Some(c)) => Some(if c.peak > p.peak { c } else { p }),
+                (Some((p, _)), None) => Some(p),
+                (None, c) => c,
+            };
+        }
+        if let Some(c) = ended {
+            self.pending = Some(match self.pending {
+                None => (c, c.t_enter + self.cfg.pass_window_us),
+                Some((p, until)) => (if c.peak > p.peak { c } else { p }, until),
+            });
+        }
+        // Report once the window has closed and no crossing that began inside it is
+        // still running.
+        match self.pending {
+            Some((p, until)) if t >= until && self.state == State::Idle => {
+                self.pending = None;
+                self.last_mid = Some(p.t_mid);
+                Some(p)
+            }
+            _ => None,
+        }
+    }
+
+    /// One sample through the level detector: every crossing, as it ends.
+    fn push_sample(&mut self, t: u64, power: i16, flags: SampleFlags) -> Option<Crossing> {
         let mut out = None;
         if let Some(prev) = self.prev_t {
             if t > prev {
@@ -252,7 +291,9 @@ impl Detector {
                     return None;
                 }
                 if s >= enter {
-                    if let Some(last) = self.last_mid {
+                    // Inside a pass window every crossing is a candidate; the minimum lap
+                    // counts from the pass that was reported.
+                    if let (Some(last), None) = (self.last_mid, self.pending) {
                         if t.saturating_sub(last) < self.cfg.min_lap_us {
                             self.suppressed = true;
                             self.push_pre(s);
@@ -386,7 +427,9 @@ impl Detector {
         let lag = ((1u32 << self.cfg.smooth_shift) - 1) as f64;
         let mid = self.t_first as f64 + dt * ((t_rise + t_fall) / 2.0 - lag);
         let t_mid = if mid < 0.0 { 0 } else { mid as u64 };
-        self.last_mid = Some(t_mid);
+        if self.cfg.pass_window_us == 0 {
+            self.last_mid = Some(t_mid);
+        }
         Crossing {
             seat: self.seat,
             t_enter: self.t_first + self.enter_idx as u64 * self.dt_us,
@@ -438,6 +481,93 @@ mod tests {
             t += 1000;
         }
         assert_eq!(found.len(), 2);
+    }
+
+    /// Feed `level(t)` at 1 kHz from `from` to `to` µs; crossings with the time they were reported.
+    fn run(d: &mut Detector, from: u64, to: u64, level: impl Fn(u64) -> i16) -> Vec<(u64, Crossing)> {
+        let mut found = Vec::new();
+        let mut t = from;
+        while t < to {
+            if let Some(c) = d.push(t, level(t), SampleFlags::empty()) {
+                found.push((t, c));
+            }
+            t += 1000;
+        }
+        found
+    }
+
+    /// A weak bump at 1.0 s (the track coming close to the gate) and the real pass at 2.2 s.
+    fn bump_then_pass(t: u64) -> i16 {
+        if t.abs_diff(1_000_000) < 50_000 {
+            -740
+        } else if t.abs_diff(2_200_000) < 150_000 {
+            -600
+        } else {
+            -920
+        }
+    }
+
+    fn windowed(pass_window_us: u64) -> Config {
+        Config { threshold: Threshold::Manual { enter: -750, exit: -800 }, smooth_shift: 0, min_lap_us: 1_500_000, exit_hold_us: 0, pass_window_us, ..Config::default() }
+    }
+
+    #[test]
+    fn without_a_pass_window_the_bump_is_the_lap_and_the_pass_is_lost() {
+        let mut d = Detector::new(0, windowed(0));
+        let found = run(&mut d, 0, 6_000_000, bump_then_pass);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].1.t_mid.abs_diff(1_000_000) < 2_000);
+    }
+
+    #[test]
+    fn a_pass_window_reports_the_strongest_crossing_once() {
+        let mut d = Detector::new(0, windowed(2_000_000));
+        let found = run(&mut d, 0, 6_000_000, bump_then_pass);
+        assert_eq!(found.len(), 1, "{found:?}");
+        let (at, c) = found[0];
+        assert!(c.t_mid.abs_diff(2_200_000) < 2_000, "{c:?}");
+        assert_eq!(c.peak, -600);
+        // reported when the window (from the bump's enter) closes, not before
+        assert!((2_950_000..=2_952_000).contains(&at), "{at}");
+    }
+
+    #[test]
+    fn a_single_pass_keeps_its_timestamps_and_is_reported_after_the_window() {
+        let level = |t: u64| pulse(t, 1_000_000);
+        let plain = run(&mut Detector::new(0, windowed(0)), 0, 5_000_000, level);
+        let held = run(&mut Detector::new(0, windowed(2_000_000)), 0, 5_000_000, level);
+        assert_eq!((plain.len(), held.len()), (1, 1));
+        assert_eq!(plain[0].1, held[0].1);
+        assert!(held[0].0 >= plain[0].1.t_enter + 2_000_000);
+    }
+
+    #[test]
+    fn a_pass_still_running_when_the_window_closes_belongs_to_it() {
+        // The real pass starts 100 ms before the window closes and is the stronger one.
+        let level = |t: u64| if t.abs_diff(1_000_000) < 50_000 { -740 } else if (2_850_000..3_150_000).contains(&t) { -600 } else { -920 };
+        let found = run(&mut Detector::new(0, windowed(2_000_000)), 0, 6_000_000, level);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].1.t_mid.abs_diff(3_000_000) < 2_000);
+    }
+
+    #[test]
+    fn minimum_lap_counts_from_the_reported_pass() {
+        // bump 1.0 s, pass 2.2 s, then a pulse at 3.4 s: 2.4 s after the bump but only 1.2 s
+        // after the pass, so inside the 1.5 s minimum lap. A pulse at 6.0 s counts.
+        let level = |t: u64| bump_then_pass(t).max(pulse(t, 3_400_000)).max(pulse(t, 6_000_000));
+        let found = run(&mut Detector::new(0, windowed(2_000_000)), 0, 10_000_000, level);
+        let mids: Vec<u64> = found.iter().map(|f| (f.1.t_mid + 500) / 1000).collect();
+        assert_eq!(mids, [2200, 6000], "{found:?}");
+    }
+
+    #[test]
+    fn switching_the_window_off_reports_a_waiting_pass() {
+        let mut d = Detector::new(0, windowed(2_000_000));
+        assert!(run(&mut d, 0, 1_500_000, bump_then_pass).is_empty());
+        d.set_config(windowed(0));
+        let found = run(&mut d, 1_500_000, 1_600_000, bump_then_pass);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].1.t_mid.abs_diff(1_000_000) < 2_000);
     }
 
     /// A 300 ms flat-topped pulse centred on `c`, on a quiet floor.

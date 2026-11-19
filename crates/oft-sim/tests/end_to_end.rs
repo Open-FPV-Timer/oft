@@ -195,3 +195,78 @@ fn samples_for_an_unplanned_seat_are_counted_as_dropped() {
     host.feed(&Message::Samples(s), 0, |_| {});
     assert_eq!(host.dropped_samples, 10);
 }
+
+#[test]
+fn eight_seats_each_time_their_own_pilot() {
+    use oft_sim::Repeat;
+    // Node clock = Timer clock, so pass centres can be compared directly.
+    let mut rig = Rig::new(Scene::default(), NodeClock { offset_us: 0, ppm: 0.0 });
+    let mut scenes = Vec::new();
+    for seat in 0..8u8 {
+        let repeat = Repeat {
+            first_us: 2_000_000 + seat as u64 * 400_000,
+            period_us: 6_000_000 + seat as u64 * 250_000,
+            pass: Pass { center_us: 0, height_db: 36.0, width_us: 130_000.0, dip: 0.4 },
+            jitter_us: 300_000,
+            seed: 100 + seat as u64,
+        };
+        let scene = Scene { repeat: Some(repeat), ..Scene::default() };
+        rig.node.set_seat_scene(seat, scene.clone());
+        scenes.push(scene);
+    }
+    rig.pump(0);
+    let mut plan = Plan::default();
+    for seat in 0..8u8 {
+        plan.push(seat, 5658 + seat as u16 * 37).unwrap();
+    }
+    rig.host.set_plan(plan);
+    rig.send(&Message::Plan(plan), 0);
+
+    let end = 40_000_000u64;
+    let mut t = 0u64;
+    while t < end {
+        t += 20_000;
+        if t % 50_000 == 0 {
+            rig.host.sync_pulsed(t);
+            rig.node.sync_edge(t);
+        }
+        rig.node.advance(t);
+        rig.pump(t);
+    }
+    assert_eq!(rig.host.dropped_samples, 0);
+    let found = rig.crossings();
+    for seat in 0..8u8 {
+        // Passes that are over well before the end.
+        let truth = scenes[seat as usize].repeat_centers(0, end - 1_500_000);
+        let got: Vec<u64> = found.iter().filter(|c| c.seat == seat).map(|c| c.t_mid).filter(|&m| m <= end - 1_500_000).collect();
+        assert!(truth.len() >= 5, "seat {seat}: only {} passes in the scene", truth.len());
+        assert_eq!(got.len(), truth.len(), "seat {seat}: {got:?} vs {truth:?}");
+        for (g, tt) in got.iter().zip(&truth) {
+            let err = *g as i64 - *tt as i64;
+            // Each seat is sampled every 8 ms when eight share the Node.
+            assert!(err.abs() < 15_000, "seat {seat}: crossing off by {err} µs");
+        }
+        // Laps differ from one to the next.
+        let laps: Vec<u64> = truth.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(laps.iter().any(|&l| l != laps[0]), "seat {seat}: every lap is {} µs", laps[0]);
+    }
+}
+
+#[test]
+fn one_seat_still_gets_the_full_sample_rate() {
+    let mut rig = Rig::new(Scene::default(), NodeClock { offset_us: 0, ppm: 0.0 });
+    rig.pump(0);
+    let plan = single_seat_plan(5800);
+    rig.host.set_plan(plan);
+    rig.send(&Message::Plan(plan), 0);
+    rig.node.advance(500_000);
+    let mut dts = Vec::new();
+    let mut dec = FrameDecoder::new();
+    for b in rig.node.take_output() {
+        if let Some(Ok(Message::Samples(s))) = dec.push(b) {
+            dts.push((s.seat, s.dt_us, s.len()));
+        }
+    }
+    assert!(!dts.is_empty());
+    assert!(dts.iter().all(|&d| d == (0, 1000, 50)), "{dts:?}");
+}

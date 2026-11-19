@@ -48,6 +48,9 @@ async fn put_config(State(t): State<Arc<Timer>>, Json(c): Json<Config>) -> Respo
     if c.exit_hold_ms > 1000 {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "exit_hold_ms must be 0..1000"}))).into_response();
     }
+    if c.pass_window_ms > 10_000 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "pass_window_ms must be 0..10000"}))).into_response();
+    }
     t.set_config(c.clone());
     Json(c).into_response()
 }

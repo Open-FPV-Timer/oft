@@ -85,6 +85,7 @@ fn detect_config(c: &Config) -> DetectConfig {
         threshold: (&c.threshold).into(),
         min_lap_us: c.min_lap_ms as u64 * 1000,
         exit_hold_us: c.exit_hold_ms as u64 * 1000,
+        pass_window_us: c.pass_window_ms as u64 * 1000,
         ..DetectConfig::default()
     }
 }
@@ -279,7 +280,7 @@ impl Timer {
                 "crossings": { "algorithms": ["edge_mid"], "replay": CROSSING_REPLAY, "fields": ["t_enter", "t_exit", "peak", "snr"] },
                 "samples.stream": { "rate_hz": 1000, "decimate": [1, 2, 5, 10, 20, 50] },
                 "samples.history": { "full_rate_s": HISTORY_S, "reduced_rate_s": 0, "reduced_hz": 0 },
-                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seat_thresholds": true, "exit_hold_ms": true },
+                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seat_thresholds": true, "exit_hold_ms": true, "pass_window_ms": true },
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
             },
         })
