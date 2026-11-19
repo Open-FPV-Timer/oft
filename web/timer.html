@@ -268,7 +268,6 @@
   <dl class="facts">
     <dt>Version</dt><dd id="fw-ver">-</dd>
     <dt>Running</dt><dd id="fwup-now">-</dd>
-    <dt id="fw-other-t">Other slot</dt><dd id="fw-other">-</dd>
   </dl>
   <div id="fwup" hidden>
     <div id="fwup-form">
@@ -292,12 +291,7 @@
     <dt>Node</dt><dd id="node-ver">-</dd>
   </dl>
   <div class="row">
-    <label class="field"><span>Firmware file (.bin)</span><input type="file" id="nodeup-file" accept=".bin"></label>
-    <label class="field"><span>Part <button type="button" class="tip" data-tip="Almost always firmware.bin. The bootloader and partition table only change with a new flash layout." aria-label="Help">?</button></span><select id="nodeup-part" aria-label="Which part">
-      <option value="65536">firmware.bin (the usual update)</option>
-      <option value="8192">bootloader.bin</option>
-      <option value="32768">partitions.bin</option>
-    </select></label>
+    <label class="field"><span>Firmware file <button type="button" class="tip" data-tip="The Node's firmware.bin. The Node's bootloader and partition table are not updated from this page; they only change with a new flash layout (see the Timer firmware's README)." aria-label="Help">?</button></span><input type="file" id="nodeup-file" accept=".bin"></label>
     <button class="btn" id="nodeup-go" disabled style="align-self:flex-end">Update the Node…</button>
   </div>
   <progress id="nodeup-bar" max="100" value="0" hidden></progress>
@@ -324,6 +318,7 @@
   <dl class="facts">
     <dt>Timer</dt><dd id="d-timer">-</dd>
     <dt>Node</dt><dd id="fw">-</dd>
+    <dt id="d-slots-t" hidden>Firmware slots <button type="button" class="tip" data-tip="The Timer keeps two copies of its firmware. An update goes into the copy that is not running, and the Timer falls back to the other one if the new firmware cannot be reached." aria-label="Help">?</button></dt><dd id="d-slots" hidden>-</dd>
   </dl>
 </section>
 
@@ -469,7 +464,7 @@
     $("wt-card").hidden = !rp;
     if (rp && $("wt").hidden) pollWireTest();
     if (rp && !fwBusy) loadFwTimer();
-    if (!rp) { $("fwup-now").textContent = "This Timer is updated with its host's own tools."; $("fw-other-t").hidden = $("fw-other").hidden = true; }
+    if (!rp) { $("fwup-now").textContent = "This Timer is updated with its host's own tools."; }
     const nodeUp = ((c["fw.update"] || {}).nodes || []).includes("uart");
     $("nodeup").hidden = !nodeUp;
     if (nodeUp && !nodeBusy) pollNodeFlash(false);
@@ -886,15 +881,16 @@
     const self = (caps()["fw.update"] || {}).self;
     $("fwup").hidden = false;
     $("fwup-form").hidden = !(f.supported && self);
-    $("fw-other-t").hidden = $("fw-other").hidden = !f.supported;
+    $("d-slots-t").hidden = $("d-slots").hidden = !f.supported;
     if (!f.supported) { $("fwup-now").textContent = "Update over the network is not available: " + (f.reason || "not supported by this firmware") + "."; return; }
     const state = f.state === "trial" ? " On trial after an update; not confirmed yet." : f.state === "restarting" ? " About to restart into new firmware." : "";
-    $("fwup-now").textContent = `${buildText(f.build)}, slot ${f.slot}.${state}`;
-    $("fw-other").textContent = f.other == null ? "empty" : buildText(f.other.build) + (f.other.confirmed ? " (the fallback)" : " (never confirmed)");
+    $("fwup-now").textContent = `${buildText(f.build)}.${state}`;
+    const spare = f.slot === "A" ? "B" : "A";
+    $("d-slots").textContent = `Running from slot ${f.slot}: ${buildText(f.build)}. Slot ${spare}: ` + (f.other == null ? "empty." : buildText(f.other.build) + (f.other.confirmed ? ", the fallback." : ", never confirmed."));
   }
   async function loadFwTimer() {
     try { showFwTimer(await fwTimer(3000)); }
-    catch { $("fwup").hidden = true; $("fwup-now").textContent = "not reported by this firmware"; $("fw-other-t").hidden = $("fw-other").hidden = true; /* no network update */ }
+    catch { $("fwup").hidden = true; $("fwup-now").textContent = "not reported by this firmware"; $("d-slots-t").hidden = $("d-slots").hidden = true; /* no network update */ }
   }
   const fwPost = (file, onProgress) => new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
@@ -920,11 +916,11 @@
       let before = null;
       try { before = await fwTimer(3000); } catch { /* shown as unknown below */ }
       if (/\.uf2$/i.test(file.name)) throw new Error("that is the USB install file; choose the .bin");
-      if (before && before.max_bytes && file.size > before.max_bytes) throw new Error(`the file is larger than a firmware slot (${before.max_bytes} bytes)`);
+      if (before && before.max_bytes && file.size > before.max_bytes) throw new Error(`the file is too large for this Timer (${before.max_bytes} bytes at most)`);
       fwState("Sending and storing the firmware…");
       const sent = await fwPost(file, (p) => { bar.value = 100 * p; if (p >= 1) fwState("Sent. The Timer is checking what it stored…"); });
       bar.value = 100;
-      fwState(`Stored and verified ${buildText(sent.build)} in slot ${sent.slot}. The Timer is restarting to try it…`);
+      fwState(`Stored and verified ${buildText(sent.build)}. The Timer is restarting to try it…`);
       // Poll until the new firmware answers and confirms, or the old one comes back.
       const t0 = Date.now();
       let result = null, sawTrial = false;
@@ -938,10 +934,10 @@
         else result = { ok: false, f };
       }
       if (result && result.ok) {
-        fwState(`Update complete: the Timer now runs ${buildText(result.f.build)} from slot ${result.f.slot}.`, "ok");
+        fwState(`Update complete: the Timer now runs ${buildText(result.f.build)}.`, "ok");
         showFwTimer(result.f);
       } else if (result) {
-        fwState(`The update did not take: the Timer is back on ${buildText(result.f.build)} in slot ${result.f.slot}` + (before && before.build === result.f.build ? ", the firmware it ran before" : "") + `. The new firmware ${sawTrial ? "started but did not confirm itself" : "did not start or could not be reached in time"}. Nothing else changed; you can try again.`, "bad");
+        fwState(`The update did not take: the Timer is back on ${buildText(result.f.build)}` + (before && before.build === result.f.build ? ", the firmware it ran before" : "") + `. The new firmware ${sawTrial ? "started but did not confirm itself" : "did not start or could not be reached in time"}. Nothing else changed; you can try again.`, "bad");
         showFwTimer(result.f);
       } else {
         fwState("No answer from the Timer for 90 s. If the new firmware cannot be reached, the Timer goes back to the old one by itself about 45 s after restarting, or when its power is cycled. Check that it still has the same address, then reload this page.", "warn");
@@ -971,31 +967,52 @@
   async function pollNodeFlash(keepGoing) {
     try {
       const running = showNodeFlash(await json("/fw/node"));
-      if (running || keepGoing) { nodeBusy = running; $("nodeup-go").disabled = running || !$("nodeup-file").files.length; }
+      if (running || keepGoing) { nodeBusy = running; $("nodeup-go").disabled = running || !nodeFile; }
       if (running) setTimeout(() => pollNodeFlash(true), 700);
       else if (keepGoing) loadInfo().catch(() => {});
     } catch { if (keepGoing) setTimeout(() => pollNodeFlash(true), 1500); }
   }
-  $("nodeup-file").addEventListener("change", () => {
+  // What a file is, from its first bytes: only a Node application image (firmware.bin) for
+  // this Node's chip may be written from here. Returns { error } or { version }.
+  const NODE_CHIP_IDS = { esp32c5: 23, esp32s3: 9 };
+  async function nodeImage(file) {
+    const b = new Uint8Array(await file.slice(0, 112).arrayBuffer());
+    if (b.length >= 2 && b[0] === 0xaa && b[1] === 0x50) return { error: "This is a partition table, not the Node's firmware. Choose firmware.bin." };
+    if (b.length < 112 || b[0] !== 0xe9) return { error: "This is not Node firmware. Choose the Node's firmware.bin." };
+    // An application carries a description block right after its first headers.
+    if (!(b[32] === 0x32 && b[33] === 0x54 && b[34] === 0xcd && b[35] === 0xab)) return { error: "This looks like the Node's bootloader, not its firmware. Choose firmware.bin." };
+    const chip = ((info && info.nodes) || []).map((n) => n.chip).find(Boolean), want = NODE_CHIP_IDS[chip], got = b[12] | (b[13] << 8);
+    if (want != null && got !== want) return { error: `This firmware is for a different chip than the Node (${chip}).` };
+    const text = (from, len) => { const part = b.slice(from, from + len), end = part.indexOf(0); return new TextDecoder().decode(end < 0 ? part : part.slice(0, end)); };
+    return { version: text(48, 32) };
+  }
+  let nodeFile = null;      // the chosen file, once it has passed the check
+  $("nodeup-file").addEventListener("change", async () => {
     const f = $("nodeup-file").files[0];
-    if (f) { const n = f.name.toLowerCase(); $("nodeup-part").value = n.includes("bootloader") ? "8192" : n.includes("partition") ? "32768" : "65536"; }
-    $("nodeup-go").disabled = nodeBusy || !f;
+    nodeFile = null;
+    $("nodeup-go").disabled = true;
+    if (!f) return nodeState("");
+    const img = await nodeImage(f).catch(() => ({ error: "The file could not be read." }));
+    if ($("nodeup-file").files[0] !== f) return;
+    if (img.error) return nodeState(img.error, "bad");
+    nodeFile = { file: f, version: img.version };
+    nodeState(img.version ? `Node firmware, version ${img.version}.` : "Node firmware.");
+    $("nodeup-go").disabled = nodeBusy;
   });
   $("nodeup-go").addEventListener("click", async () => {
-    const file = $("nodeup-file").files[0];
-    if (!file || nodeBusy) return;
-    const part = $("nodeup-part").selectedOptions[0].textContent;
-    if (!(await ask({ title: "Update the Node's firmware?", body: `${file.name}, ${Math.round(file.size / 1024)} KB, written as ${part}.\n\nTiming stops until the Node is back, a couple of minutes.`, ok: "Update" }))) return;
+    if (!nodeFile || nodeBusy) return;
+    const file = nodeFile.file;
+    if (!(await ask({ title: "Update the Node's firmware?", body: `${file.name}, ${Math.round(file.size / 1024)} KB` + (nodeFile.version ? `, version ${nodeFile.version}` : "") + `.\n\nTiming stops until the Node is back, a couple of minutes.`, ok: "Update" }))) return;
     nodeBusy = true; $("nodeup-go").disabled = true;
     nodeState("Sending the file to the Timer…");
     try {
-      const r = await fetch(`${API}/fw/node?offset=${$("nodeup-part").value}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+      const r = await fetch(`${API}/fw/node?offset=65536`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       showNodeFlash(body);
       setTimeout(() => pollNodeFlash(true), 500);
     } catch (e) {
-      nodeBusy = false; $("nodeup-go").disabled = false;
+      nodeBusy = false; $("nodeup-go").disabled = !nodeFile;
       nodeState("Could not start the Node update: " + e.message, "bad");
     }
   });
