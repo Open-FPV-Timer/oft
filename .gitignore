@@ -3,3 +3,4 @@
 *.pdb
 /bench/.run/
 /bench/fw/
+__pycache__/
