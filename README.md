@@ -28,9 +28,31 @@ every seat gets its own simulated pilot. Seat 0 laps every `--fake-lap-s` second
 by up to `--fake-lap-jitter-s` (default 0.3). The laps are the same on every run. As with
 a real Node, the seats share its sample rate: 1000 samples/s with one seat, 125 with eight.
 
+With a real Node, `oftd` keeps its saved settings in `~/.config/oftd/settings.json`
+(`--settings <file>` to choose, `--no-settings` for none; `--fake` keeps none unless given a
+file). "Save as power-on settings" on the page writes the config in use there, and the
+next start comes back with it.
+
+Its id is `oft-` and four hex digits that stay the same on one machine (from
+`/etc/machine-id`).
+
 `oftd` advertises itself over mDNS as `<id>._oft._tcp.local.` (spec §6.1); `--no-mdns` turns
 that off, `--id` sets the id. `cargo test -p oftd --test api mdns -- --ignored` checks the
 advertisement on a host with multicast.
+
+## One protocol, two implementations
+
+`oftd` and the RP2350 firmware ([oft-timer-rp2350](../oft-timer-rp2350)) share `oft-core`
+and `oft-nodelink` but build their HTTP replies in separate code. `bench/conformance.py`
+keeps them in step: it asks a Timer the same questions and checks every reply against one
+description of its shape. Run it against each kind after changing either:
+
+```sh
+bench/conformance.py --fake                          # builds and checks oftd --fake
+bench/conformance.py http://192.168.1.50:7270        # any Timer; safe on one in use
+```
+
+`cross/build-pi.sh` builds `oftd` for a 64-bit Raspberry Pi in Docker.
 
 ## Design rules
 

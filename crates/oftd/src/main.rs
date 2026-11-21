@@ -35,6 +35,13 @@ struct Args {
     /// Baud rate for --serial.
     #[arg(long, default_value_t = 921_600)]
     baud: u32,
+    /// File the saved settings are kept in. Default: ~/.config/oftd/settings.json with a
+    /// real Node, none with --fake.
+    #[arg(long)]
+    settings: Option<std::path::PathBuf>,
+    /// Keep nothing across a restart, even with a real Node.
+    #[arg(long, conflicts_with = "settings")]
+    no_settings: bool,
     /// Timer id advertised to clients.
     #[arg(long)]
     id: Option<String>,
@@ -82,6 +89,15 @@ async fn main() {
     let mut cfg = TimerConfig::default();
     if let Some(id) = args.id {
         cfg.id = id;
+    }
+    cfg.settings = match (args.settings, args.no_settings || args.fake) {
+        (Some(path), _) => Some(path),
+        (None, true) => None,
+        (None, false) => oftd::settings::default_path(),
+    };
+    match &cfg.settings {
+        Some(path) => eprintln!("oftd: settings in {}", path.display()),
+        None => eprintln!("oftd: settings are not kept across a restart"),
     }
     let timer = Timer::new(cfg, link, Config::default());
     let driver = tokio::spawn(timer.clone().run());

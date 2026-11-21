@@ -7,6 +7,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use serde_json::json;
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -17,6 +18,7 @@ pub fn router(timer: Arc<Timer>) -> Router {
     let api = Router::new()
         .route("/info", get(info))
         .route("/config", get(get_config).put(put_config))
+        .route("/config/save", get(get_config_save).post(post_config_save).delete(delete_config_save))
         .route("/status", get(status))
         .route("/time", get(time))
         .route("/crossings", get(crossings))
@@ -39,20 +41,48 @@ async fn get_config(State(t): State<Arc<Timer>>) -> Json<Config> {
 }
 
 async fn put_config(State(t): State<Arc<Timer>>, Json(c): Json<Config>) -> Response {
-    if c.seats.iter().any(|s| s.seat >= 8) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "seat must be 0..7"}))).into_response();
-    }
-    if c.seats.iter().any(|s| !(5000..=6200).contains(&s.freq_mhz)) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "freq_mhz out of range"}))).into_response();
-    }
-    if c.exit_hold_ms > 1000 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "exit_hold_ms must be 0..1000"}))).into_response();
-    }
-    if c.pass_window_ms > 10_000 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "pass_window_ms must be 0..10000"}))).into_response();
+    if let Err(e) = c.check() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": e}))).into_response();
     }
     t.set_config(c.clone());
     Json(c).into_response()
+}
+
+/// `{"saved", "current_is_saved"}` (spec §6.3), or 404 on a Timer started without a
+/// settings file.
+fn save_state(t: &Timer) -> Response {
+    if t.cfg.settings.is_none() {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "this Timer does not keep settings (oftd was started without a settings file)"}))).into_response();
+    }
+    let inner = t.inner.lock().unwrap();
+    Json(json!({ "saved": inner.saved.is_some(), "current_is_saved": inner.saved.as_ref() == Some(&inner.config) })).into_response()
+}
+
+async fn get_config_save(State(t): State<Arc<Timer>>) -> Response {
+    save_state(&t)
+}
+
+/// Store the config in use as the power-on config.
+async fn post_config_save(State(t): State<Arc<Timer>>) -> Response {
+    if t.cfg.settings.is_none() {
+        return save_state(&t);
+    }
+    let config = t.inner.lock().unwrap().config.clone();
+    match t.save_config(Some(config)) {
+        Ok(()) => save_state(&t),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
+    }
+}
+
+/// Forget the power-on config: the built-in defaults at the next start.
+async fn delete_config_save(State(t): State<Arc<Timer>>) -> Response {
+    if t.cfg.settings.is_none() {
+        return save_state(&t);
+    }
+    match t.save_config(None) {
+        Ok(()) => save_state(&t),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
+    }
 }
 
 async fn status(State(t): State<Arc<Timer>>) -> Json<crate::protocol::StatusJson> {

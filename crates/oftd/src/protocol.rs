@@ -54,6 +54,25 @@ pub fn default_exit_hold_ms() -> u32 {
     (oft_core::DetectConfig::default().exit_hold_us / 1000) as u32
 }
 
+impl Config {
+    /// Why this config cannot be used, if it cannot.
+    pub fn check(&self) -> Result<(), &'static str> {
+        if self.seats.iter().any(|s| s.seat >= 8) {
+            return Err("seat must be 0..7");
+        }
+        if self.seats.iter().any(|s| !(5000..=6200).contains(&s.freq_mhz)) {
+            return Err("freq_mhz out of range");
+        }
+        if self.exit_hold_ms > 1000 {
+            return Err("exit_hold_ms must be 0..1000");
+        }
+        if self.pass_window_ms > 10_000 {
+            return Err("pass_window_ms must be 0..10000");
+        }
+        Ok(())
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {

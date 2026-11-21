@@ -9,6 +9,7 @@ pub mod link;
 pub mod mdns;
 pub mod protocol;
 pub mod serial;
+pub mod settings;
 pub mod timer;
 
 pub use timer::{Timer, TimerConfig};

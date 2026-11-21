@@ -23,6 +23,11 @@ struct Server {
 /// Start a Timer whose fake Node passes every `lap_s` seconds (first at 1.5 s),
 /// with the driver ticking every 5 ms so tests run quickly.
 async fn start(lap_s: f64) -> Server {
+    start_with(lap_s, None).await
+}
+
+/// As `start`, keeping settings in `settings` if given.
+async fn start_with(lap_s: f64, settings: Option<std::path::PathBuf>) -> Server {
     let gap = (lap_s * 1e6) as u64;
     let n = if gap > 0 { 1000 } else { 0 };
     let scene = Scene {
@@ -30,7 +35,7 @@ async fn start(lap_s: f64) -> Server {
         ..Scene::default()
     };
     let link = Box::new(FakeLink(FakeNode::new(scene, NodeClock { offset_us: -700_000, ppm: 25.0 }, 5)));
-    let cfg = TimerConfig { id: "oft-test".into(), tick: Duration::from_millis(5), status_period: Duration::from_millis(200), ..TimerConfig::default() };
+    let cfg = TimerConfig { id: "oft-test".into(), tick: Duration::from_millis(5), status_period: Duration::from_millis(200), settings, ..TimerConfig::default() };
     // Short min-lap so 1 s test laps are all counted.
     let timer = Timer::new(cfg, link, Config { min_lap_ms: 500, ..Config::default() });
     let driver = tokio::spawn(timer.clone().run());
@@ -148,6 +153,70 @@ async fn config_round_trips_and_replans_the_node() {
     assert_eq!(inner.host.detect_config().min_lap_us, 3_000_000);
     assert_eq!(inner.host.detect_config().exit_hold_us, 150_000);
     assert_eq!(inner.host.detect_config().pass_window_us, 2_500_000);
+}
+
+#[tokio::test]
+async fn saved_settings_survive_a_restart() {
+    let dir = std::env::temp_dir().join(format!("oftd-test-{}-{:?}", std::process::id(), std::thread::current().id()));
+    let file = dir.join("nested").join("settings.json");
+    let _ = std::fs::remove_dir_all(&dir);
+    let client = reqwest::Client::new();
+    let save_url = |s: &Server| format!("{}/config/save", s.base);
+    {
+        let s = start_with(0.0, Some(file.clone())).await;
+        assert_eq!(get(&format!("{}/info", s.base)).await["capabilities"]["config"]["persist"], true);
+        // Nothing saved yet: the Timer started with what it was given.
+        assert_eq!(get(&save_url(&s)).await, serde_json::json!({"saved": false, "current_is_saved": false}));
+        let mut cfg: Config = client.get(format!("{}/config", s.base)).send().await.unwrap().json().await.unwrap();
+        assert_eq!(cfg.min_lap_ms, 500);
+        cfg.seats = (0..4).map(|k| oftd::protocol::SeatConfig { seat: k, freq_mhz: 5658 + 74 * k as u16, enabled: true, threshold: None }).collect();
+        cfg.min_lap_ms = 2500;
+        assert_eq!(client.put(format!("{}/config", s.base)).json(&cfg).send().await.unwrap().status(), 200);
+        // Applied is not saved.
+        assert!(!file.exists());
+        let r: Value = client.post(save_url(&s)).send().await.unwrap().json().await.unwrap();
+        assert_eq!(r, serde_json::json!({"saved": true, "current_is_saved": true}));
+        // A later change shows as differing from the saved settings.
+        cfg.min_lap_ms = 3000;
+        client.put(format!("{}/config", s.base)).json(&cfg).send().await.unwrap();
+        assert_eq!(get(&save_url(&s)).await, serde_json::json!({"saved": true, "current_is_saved": false}));
+    }
+    {
+        // A restart comes back with the saved config, not the later change or the defaults.
+        let s = start_with(0.0, Some(file.clone())).await;
+        let cfg: Config = client.get(format!("{}/config", s.base)).send().await.unwrap().json().await.unwrap();
+        assert_eq!((cfg.seats.len(), cfg.seats[3].freq_mhz, cfg.min_lap_ms), (4, 5880, 2500));
+        assert_eq!(get(&save_url(&s)).await, serde_json::json!({"saved": true, "current_is_saved": true}));
+        // Forgetting keeps the config in use until the next start.
+        let r: Value = client.delete(save_url(&s)).send().await.unwrap().json().await.unwrap();
+        assert_eq!(r, serde_json::json!({"saved": false, "current_is_saved": false}));
+        let cfg: Config = client.get(format!("{}/config", s.base)).send().await.unwrap().json().await.unwrap();
+        assert_eq!(cfg.seats.len(), 4);
+    }
+    {
+        let s = start_with(0.0, Some(file.clone())).await;
+        let cfg: Config = client.get(format!("{}/config", s.base)).send().await.unwrap().json().await.unwrap();
+        assert_eq!((cfg.seats.len(), cfg.min_lap_ms), (1, 500));
+    }
+    // A damaged file, or a saved config this version refuses, means the defaults, not a crash.
+    for bad in ["{\"config\": {\"seats\": [", "{\"config\": {\"seats\": [{\"seat\": 9, \"freq_mhz\": 5800, \"enabled\": true}], \"threshold\": {\"mode\": \"auto\", \"snr_enter\": 150, \"hysteresis\": 50}, \"min_lap_ms\": 2000}}"] {
+        std::fs::write(&file, bad).unwrap();
+        let s = start_with(0.0, Some(file.clone())).await;
+        let cfg: Config = client.get(format!("{}/config", s.base)).send().await.unwrap().json().await.unwrap();
+        assert_eq!(cfg.seats.len(), 1);
+        assert_eq!(get(&save_url(&s)).await["saved"], false);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_timer_without_a_settings_file_says_so() {
+    let s = start(0.0).await;
+    assert_eq!(get(&format!("{}/info", s.base)).await["capabilities"]["config"]["persist"], false);
+    let client = reqwest::Client::new();
+    for r in [client.get(format!("{}/config/save", s.base)), client.post(format!("{}/config/save", s.base)), client.delete(format!("{}/config/save", s.base))] {
+        assert_eq!(r.send().await.unwrap().status(), 404);
+    }
 }
 
 #[tokio::test]

@@ -27,17 +27,34 @@ pub struct TimerConfig {
     pub ping_period: Duration,
     pub tick: Duration,
     pub status_period: Duration,
+    /// The settings file (`settings.rs`). `None`: nothing is kept across a restart.
+    pub settings: Option<std::path::PathBuf>,
+}
+
+/// `oft-` and four hex digits that stay the same on this machine (from `/etc/machine-id`),
+/// since clients key on a Timer's id. Without a machine id, the process id: unique, not stable.
+fn default_id() -> String {
+    let n = match std::fs::read_to_string("/etc/machine-id") {
+        // FNV-1a over the id, folded to 16 bits.
+        Ok(id) if !id.trim().is_empty() => {
+            let h = id.trim().bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193));
+            (h ^ (h >> 16)) & 0xFFFF
+        }
+        _ => std::process::id() & 0xFFFF,
+    };
+    format!("oft-{n:04x}")
 }
 
 impl Default for TimerConfig {
     fn default() -> Self {
         Self {
-            id: format!("oft-{:04x}", std::process::id() & 0xFFFF),
+            id: default_id(),
             name: "OFT Timer".into(),
             sync_hz: 20,
             ping_period: Duration::from_secs(1),
             tick: Duration::from_millis(20),
             status_period: Duration::from_secs(1),
+            settings: None,
         }
     }
 }
@@ -60,6 +77,8 @@ struct SeatHistory {
 pub struct Inner {
     pub host: NodeHost,
     pub config: Config,
+    /// What the settings file holds (kept in step by `save_config`).
+    pub saved: Option<Config>,
     pub crossings: VecDeque<(u64, Crossing)>,
     pub next_seq: u64,
     history: Vec<Option<SeatHistory>>,
@@ -115,7 +134,10 @@ fn plan_for(c: &Config) -> Plan {
 }
 
 impl Timer {
+    /// `config` is what the Timer starts with unless its settings file holds a saved one.
     pub fn new(cfg: TimerConfig, link: Box<dyn NodeLink>, config: Config) -> Arc<Self> {
+        let saved = cfg.settings.as_deref().and_then(crate::settings::load);
+        let config = saved.clone().unwrap_or(config);
         let (events, _) = broadcast::channel(1024);
         let boot_id = format!("{:08x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0));
         let mut host = NodeHost::new(detect_config(&config));
@@ -128,6 +150,7 @@ impl Timer {
             inner: Mutex::new(Inner {
                 host,
                 config,
+                saved,
                 crossings: VecDeque::new(),
                 next_seq: 1,
                 history: (0..8).map(|_| None).collect(),
@@ -141,6 +164,15 @@ impl Timer {
             events,
             clients: AtomicUsize::new(0),
         })
+    }
+
+    /// Write the power-on config to the settings file (`None` forgets it) and, once it is
+    /// safely there, record it as the saved state.
+    pub fn save_config(&self, config: Option<Config>) -> Result<(), String> {
+        let path = self.cfg.settings.as_deref().ok_or("this Timer does not keep settings")?;
+        crate::settings::save(path, config.as_ref()).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+        self.inner.lock().unwrap().saved = config;
+        Ok(())
     }
 
     /// Timer clock: µs since start.
@@ -280,7 +312,7 @@ impl Timer {
                 "crossings": { "algorithms": ["edge_mid"], "replay": CROSSING_REPLAY, "fields": ["t_enter", "t_exit", "peak", "snr"] },
                 "samples.stream": { "rate_hz": 1000, "decimate": [1, 2, 5, 10, 20, 50] },
                 "samples.history": { "full_rate_s": HISTORY_S, "reduced_rate_s": 0, "reduced_hz": 0 },
-                "config": { "persist": false, "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seat_thresholds": true, "exit_hold_ms": true, "pass_window_ms": true },
+                "config": { "persist": self.cfg.settings.is_some(), "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seat_thresholds": true, "exit_hold_ms": true, "pass_window_ms": true },
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
             },
         })
