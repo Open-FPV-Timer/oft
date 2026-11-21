@@ -292,7 +292,7 @@
     <dt>Node</dt><dd id="node-ver">-</dd>
   </dl>
   <div class="row">
-    <label class="field"><span>Firmware file <button type="button" class="tip" data-tip="The Node's firmware.bin. The Node's bootloader and partition table are not updated from this page; they only change with a new flash layout (see the Timer firmware's README)." aria-label="Help">?</button></span><input type="file" id="nodeup-file" accept=".bin"></label>
+    <label class="field"><span>Firmware file <button type="button" class="tip" data-tip="The Node's firmware file (.bin). For an ESP32 Node this is firmware.bin: its bootloader and partition table are not updated from this page; they only change with a new flash layout (see the Timer firmware's README)." aria-label="Help">?</button></span><input type="file" id="nodeup-file" accept=".bin"></label>
     <button class="btn" id="nodeup-go" disabled style="align-self:flex-end">Update the Node…</button>
   </div>
   <progress id="nodeup-bar" max="100" value="0" hidden></progress>
@@ -1018,7 +1018,7 @@
       nodeState(`Updating the Node: ${f.step}` + (f.step === "writing" ? ` (${Math.round(f.written / 1024)} of ${Math.round(f.bytes / 1024)} KB)` : "") + "…");
     } else if (f.done) {
       bar.hidden = true;
-      if (f.ok) nodeState(`Node updated in ${f.seconds} s: ${Math.round(f.bytes / 1024)} KB written and checked. ` + (f.returned ? "The Node is back on the link." : "The Node has not come back on the link yet."), f.returned ? "ok" : "bad");
+      if (f.ok) nodeState(`Node updated in ${f.seconds} s: ${Math.round(f.bytes / 1024)} KB written and checked. ` + (f.returned ? "The Node is back on the link." : "The Node has not come back on the link yet.") + (f.backup ? ` What was on the Node before is saved on the Timer as ${f.backup}.` : ""), f.returned ? "ok" : "bad");
       else nodeState(`Node update failed after ${f.seconds} s: ${f.error}. ` + (f.returned ? "The Node restarted with what it had." : "The Node is not answering; run the update again."), "bad");
     }
     return f.running;
@@ -1036,6 +1036,14 @@
   const NODE_CHIP_IDS = { esp32c5: 23, esp32s3: 9 };
   async function nodeImage(file) {
     const b = new Uint8Array(await file.slice(0, 112).arrayBuffer());
+    // A Timer whose Node is an STM32 says so: its firmware starts with a stack pointer in
+    // RAM and a reset address in flash, and carries no version the page can read.
+    if ((caps()["fw.update"] || {}).node_image === "stm32f1") {
+      const word = (at) => (b[at] | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0;
+      if (b[0] === 0xe9) return { error: "This is firmware for an ESP32 Node. This Timer's Node is an STM32." };
+      if (b.length < 8 || word(0) < 0x20000000 || word(0) > 0x20020000 || word(4) >>> 24 !== 0x08) return { error: "This is not STM32 Node firmware. Choose the Node's .bin file." };
+      return { version: "" };
+    }
     if (b.length >= 2 && b[0] === 0xaa && b[1] === 0x50) return { error: "This is a partition table, not the Node's firmware. Choose firmware.bin." };
     if (b.length < 112 || b[0] !== 0xe9) return { error: "This is not Node firmware. Choose the Node's firmware.bin." };
     // An application carries a description block right after its first headers.

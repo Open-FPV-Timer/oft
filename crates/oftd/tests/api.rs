@@ -400,3 +400,41 @@ async fn websocket_rejects_bad_subscriptions_without_dropping() {
     assert_eq!(v["type"], "pong");
     assert!(v["time_us"].is_u64());
 }
+
+/// A Node that stops talking (unplugged, restarting, being flashed) must not take the
+/// Timer down with it: this once deadlocked the driver loop three seconds in.
+#[tokio::test]
+async fn the_timer_keeps_answering_when_its_node_goes_quiet() {
+    use oftd::link::NodeLink;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct Unpluggable(FakeLink, Arc<AtomicBool>);
+    impl NodeLink for Unpluggable {
+        fn write(&mut self, bytes: &[u8], t: u64) {
+            self.0.write(bytes, t)
+        }
+        fn read(&mut self, t: u64) -> Vec<u8> {
+            let out = self.0.read(t);
+            if self.1.load(Ordering::Relaxed) { Vec::new() } else { out }
+        }
+        fn sync_pulse(&mut self, t: u64) {
+            self.0.sync_pulse(t)
+        }
+        fn has_sync(&self) -> bool {
+            true
+        }
+        fn describe(&self) -> String {
+            "unpluggable".into()
+        }
+    }
+    let quiet = Arc::new(AtomicBool::new(false));
+    let link = Box::new(Unpluggable(FakeLink(FakeNode::new(Scene::default(), NodeClock { offset_us: 0, ppm: 0.0 }, 1)), quiet.clone()));
+    let cfg = TimerConfig { id: "oft-test".into(), tick: Duration::from_millis(5), ..TimerConfig::default() };
+    let timer = Timer::new(cfg, link, Config::default());
+    let _driver = tokio::spawn(timer.clone().run());
+    let (addr, _server) = serve(timer.clone(), "127.0.0.1:0".parse().unwrap()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    quiet.store(true, Ordering::Relaxed);
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    let status = tokio::time::timeout(Duration::from_secs(2), get(&format!("http://{addr}/oft/v1/status"))).await.expect("the Timer stopped answering");
+    assert_eq!(status["node_connected"], false, "{status}");
+}

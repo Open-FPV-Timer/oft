@@ -7,7 +7,7 @@ use oft_core::{Crossing, DetectConfig, Event, NodeHost, MAX_SEATS};
 use oft_nodelink::msg::{Message, Plan, Samples, GAIN_AUTO};
 use oft_nodelink::{encode_frame, FrameDecoder, MAX_FRAME};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
@@ -29,6 +29,8 @@ pub struct TimerConfig {
     pub status_period: Duration,
     /// The settings file (`settings.rs`). `None`: nothing is kept across a restart.
     pub settings: Option<std::path::PathBuf>,
+    /// The Node is an STM32 this Timer can restart into its bootloader (`nodefw.rs`).
+    pub stm32: Option<crate::nodefw::Stm32Pins>,
 }
 
 /// `oft-` and four hex digits that stay the same on this machine (from `/etc/machine-id`),
@@ -55,6 +57,7 @@ impl Default for TimerConfig {
             tick: Duration::from_millis(20),
             status_period: Duration::from_secs(1),
             settings: None,
+            stm32: None,
         }
     }
 }
@@ -94,7 +97,12 @@ pub struct Timer {
     pub boot_id: String,
     started: Instant,
     pub inner: Mutex<Inner>,
-    link: Mutex<Box<dyn NodeLink>>,
+    pub(crate) link: Mutex<Box<dyn NodeLink>>,
+    /// A Node firmware update has the link: the driver loop leaves it alone.
+    pub(crate) flashing: AtomicBool,
+    /// Times a Node has introduced itself.
+    pub(crate) hellos: AtomicU32,
+    pub node_fw: Mutex<crate::nodefw::NodeFw>,
     pub events: broadcast::Sender<Outgoing>,
     pub clients: AtomicUsize,
 }
@@ -161,6 +169,9 @@ impl Timer {
                 last_node_rx: None,
             }),
             link: Mutex::new(link),
+            flashing: AtomicBool::new(false),
+            hellos: AtomicU32::new(0),
+            node_fw: Mutex::new(Default::default()),
             events,
             clients: AtomicUsize::new(0),
         })
@@ -286,8 +297,13 @@ impl Timer {
     pub fn info(&self) -> serde_json::Value {
         let inner = self.inner.lock().unwrap();
         let hello = inner.host.hello();
-        let has_sync = self.link.lock().unwrap().has_sync();
-        serde_json::json!({
+        let flashing = self.flashing.load(Ordering::Relaxed);
+        // An update holds the link for its whole run: do not wait for it here.
+        let (has_sync, link_name) = match self.link.try_lock() {
+            Ok(l) => (l.has_sync(), l.describe()),
+            Err(_) => (false, "busy".into()),
+        };
+        let mut v = serde_json::json!({
             "id": self.cfg.id,
             "name": self.cfg.name,
             "boot_id": self.boot_id,
@@ -302,8 +318,8 @@ impl Timer {
                 "fw": format!("{}.{}.{}", h.fw[0], h.fw[1], h.fw[2]),
                 "range_mhz": [h.freq_min_mhz, h.freq_max_mhz],
                 "max_seats": h.max_seats,
-                "link": self.link.lock().unwrap().describe(),
-            })]).unwrap_or_default(),
+                "link": link_name,
+            })]).filter(|_| !flashing).unwrap_or_default(),
             "seats": inner.config.seats.iter().filter(|s| s.enabled).map(|s| serde_json::json!({
                 "seat": s.seat, "node": 0,
                 "rate_hz": inner.history.get(s.seat as usize).and_then(|h| h.as_ref()).map(|h| h.rate_hz).unwrap_or(0),
@@ -315,7 +331,11 @@ impl Timer {
                 "config": { "persist": self.cfg.settings.is_some(), "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seat_thresholds": true, "exit_hold_ms": true, "pass_window_ms": true },
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
             },
-        })
+        });
+        if self.cfg.stm32.is_some() {
+            v["capabilities"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false, "node_image": "stm32f1" });
+        }
+        v
     }
 
     /// TXT record for mDNS discovery (spec §6.1), in a fixed key order.
@@ -351,6 +371,12 @@ impl Timer {
         let mut decoder = FrameDecoder::new();
         loop {
             tick.tick().await;
+            if self.flashing.load(Ordering::SeqCst) {
+                // A firmware update has the link (nodefw.rs).
+                decoder = FrameDecoder::new();
+                self.inner.lock().unwrap().node_connected = false;
+                continue;
+            }
             let now = Instant::now();
             let t = self.now_us();
 
@@ -386,7 +412,10 @@ impl Timer {
                         }
                         let Inner { host, crossings, next_seq, node_temp_dc, node_status, .. } = &mut *inner;
                         host.feed(&m, t, |e| match e {
-                            Event::Hello(_) => replan = true,
+                            Event::Hello(_) => {
+                                self.hellos.fetch_add(1, Ordering::Relaxed);
+                                replan = true;
+                            }
                             Event::Crossing(c) => {
                                 let seq = *next_seq;
                                 *next_seq += 1;
@@ -405,9 +434,12 @@ impl Timer {
                         });
                     }
                 }
-            } else if let Some(last) = self.inner.lock().unwrap().last_node_rx {
-                if now.duration_since(last) > Duration::from_secs(3) {
-                    self.inner.lock().unwrap().node_connected = false;
+            } else {
+                // One lock, released before the next statement: an `if let` on the lock
+                // itself would still hold it inside its block and deadlock on a second lock.
+                let mut inner = self.inner.lock().unwrap();
+                if inner.last_node_rx.is_some_and(|last| now.duration_since(last) > Duration::from_secs(3)) {
+                    inner.node_connected = false;
                 }
             }
             if replan {

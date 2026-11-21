@@ -59,6 +59,17 @@ bench/conformance.py http://192.168.1.50:7270        # any Timer; safe on one in
 `oftd` as a service on the Pi's UART (`/dev/ttyAMA0`), started at every boot. Run it again
 to update.
 
+On a RotorHazard-style board whose Node is an STM32 (a NuclearHazard, for one), tell `oftd`
+which GPIOs hold the STM32's reset and BOOT0 lines and the Timer page can update the Node's
+firmware (`/fw/node`), as the RP2350 Timer does for a C5:
+
+```sh
+sudo ./install-service.sh /dev/ttyAMA0 --stm32-reset-gpio 17 --stm32-boot0-gpio 27
+```
+
+The first time it replaces firmware that is not an OFT Node's, it saves what was on the chip
+as `~/.config/oftd/node-backup-<hash>.bin`.
+
 ## Design rules
 
 - Timestamps are taken on the Node and mapped to the Timer clock; network latency never

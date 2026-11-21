@@ -7,6 +7,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use axum::body::Bytes;
 use serde_json::json;
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
@@ -19,6 +20,7 @@ pub fn router(timer: Arc<Timer>) -> Router {
         .route("/info", get(info))
         .route("/config", get(get_config).put(put_config))
         .route("/config/save", get(get_config_save).post(post_config_save).delete(delete_config_save))
+        .route("/fw/node", get(get_fw_node).post(post_fw_node))
         .route("/status", get(status))
         .route("/time", get(time))
         .route("/crossings", get(crossings))
@@ -82,6 +84,26 @@ async fn delete_config_save(State(t): State<Arc<Timer>>) -> Response {
     match t.save_config(None) {
         Ok(()) => save_state(&t),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e}))).into_response(),
+    }
+}
+
+/// The Node update in progress or the last one's result; 404 on a Timer that cannot
+/// update its Node.
+async fn get_fw_node(State(t): State<Arc<Timer>>) -> Response {
+    if t.cfg.stm32.is_none() {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "this Timer cannot update its Node"}))).into_response();
+    }
+    Json(t.node_fw.lock().unwrap().clone()).into_response()
+}
+
+/// Start a Node update; the body is the firmware file.
+async fn post_fw_node(State(t): State<Arc<Timer>>, body: Bytes) -> Response {
+    if t.cfg.stm32.is_none() {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "this Timer cannot update its Node"}))).into_response();
+    }
+    match crate::nodefw::start(t, body.to_vec()) {
+        Ok(state) => Json(state).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))).into_response(),
     }
 }
 

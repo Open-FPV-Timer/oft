@@ -4,14 +4,19 @@
 
 use crate::link::NodeLink;
 use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct SerialLink {
     port: Box<dyn serialport::SerialPort>,
     rx: Receiver<Vec<u8>>,
     path: String,
+    baud: u32,
+    /// Set while a firmware update has the port: the reader thread stays off it.
+    paused: Arc<AtomicBool>,
     pub read_errors: u32,
 }
 
@@ -20,11 +25,17 @@ impl SerialLink {
         let port = serialport::new(path, baud).timeout(Duration::from_millis(50)).open()?;
         let mut reader = port.try_clone()?;
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let paused = Arc::new(AtomicBool::new(false));
+        let reader_paused = paused.clone();
         thread::Builder::new()
             .name("oft-serial-rx".into())
             .spawn(move || {
                 let mut buf = [0u8; 1024];
                 loop {
+                    if reader_paused.load(Ordering::Relaxed) {
+                        thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
                     match reader.read(&mut buf) {
                         Ok(0) => {}
                         Ok(n) => {
@@ -42,7 +53,7 @@ impl SerialLink {
                 }
             })
             .expect("spawn serial reader");
-        Ok(Self { port, rx, path: path.to_string(), read_errors: 0 })
+        Ok(Self { port, rx, path: path.to_string(), baud, paused, read_errors: 0 })
     }
 }
 
@@ -74,5 +85,52 @@ impl NodeLink for SerialLink {
 
     fn describe(&self) -> String {
         format!("serial:{}", self.path)
+    }
+
+    fn bootloader_mode(&mut self, on: bool) -> std::io::Result<()> {
+        if on {
+            self.paused.store(true, Ordering::Relaxed);
+            thread::sleep(Duration::from_millis(150)); // the reader's read in progress times out
+            while self.rx.try_recv().is_ok() {}
+            self.port.set_baud_rate(crate::stm32::BOOT_BAUD)?;
+            self.port.set_parity(serialport::Parity::Even)?;
+        } else {
+            // Put back as much as possible even if one step fails.
+            let parity = self.port.set_parity(serialport::Parity::None);
+            let baud = self.port.set_baud_rate(self.baud);
+            let _ = self.port.set_timeout(Duration::from_millis(50));
+            let _ = self.port.clear(serialport::ClearBuffer::All);
+            self.paused.store(false, Ordering::Relaxed);
+            parity?;
+            baud?;
+        }
+        Ok(())
+    }
+
+    fn raw_write(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.port.write_all(data)?;
+        self.port.flush()
+    }
+
+    fn raw_read(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<()> {
+        let end = Instant::now() + timeout;
+        let mut got = 0;
+        while got < buf.len() {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            self.port.set_timeout(left)?;
+            match self.port.read(&mut buf[got..]) {
+                Ok(n) => got += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    fn raw_discard(&mut self) {
+        let _ = self.port.clear(serialport::ClearBuffer::All);
     }
 }

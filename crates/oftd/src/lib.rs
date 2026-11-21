@@ -7,9 +7,11 @@
 pub mod api;
 pub mod link;
 pub mod mdns;
+pub mod nodefw;
 pub mod protocol;
 pub mod serial;
 pub mod settings;
+pub mod stm32;
 pub mod timer;
 
 pub use timer::{Timer, TimerConfig};

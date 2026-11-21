@@ -12,6 +12,21 @@ pub trait NodeLink: Send {
     /// Whether this transport can carry a SYNC pulse at all.
     fn has_sync(&self) -> bool;
     fn describe(&self) -> String;
+
+    /// For a firmware update over the same wires (`nodefw.rs`): stop reading the Node link
+    /// and set the line up for the chip's bootloader, or put it back. The `raw_*` calls
+    /// work in between. Only a real serial port can do this.
+    fn bootloader_mode(&mut self, _on: bool) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+    fn raw_write(&mut self, _data: &[u8]) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+    /// Fill `buf`, or fail once `timeout` has passed.
+    fn raw_read(&mut self, _buf: &mut [u8], _timeout: std::time::Duration) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+    fn raw_discard(&mut self) {}
 }
 
 /// The simulator, in process. `read` advances the scene to `t_timer` first.

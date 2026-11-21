@@ -42,6 +42,14 @@ struct Args {
     /// Keep nothing across a restart, even with a real Node.
     #[arg(long, conflicts_with = "settings")]
     no_settings: bool,
+    /// The Node is an STM32 on the serial port with its reset line on this GPIO (BCM number)
+    /// and BOOT0 on --stm32-boot0-gpio, as on RotorHazard-style boards (17 and 27). With
+    /// both, the Timer page can update the Node's firmware.
+    #[arg(long, requires = "stm32_boot0_gpio", requires = "serial")]
+    stm32_reset_gpio: Option<u8>,
+    /// See --stm32-reset-gpio.
+    #[arg(long, requires = "stm32_reset_gpio")]
+    stm32_boot0_gpio: Option<u8>,
     /// Timer id advertised to clients.
     #[arg(long)]
     id: Option<String>,
@@ -89,6 +97,10 @@ async fn main() {
     let mut cfg = TimerConfig::default();
     if let Some(id) = args.id {
         cfg.id = id;
+    }
+    if let (Some(reset), Some(boot0)) = (args.stm32_reset_gpio, args.stm32_boot0_gpio) {
+        cfg.stm32 = Some(oftd::nodefw::Stm32Pins { reset, boot0 });
+        eprintln!("oftd: can update an STM32 Node (reset on GPIO{reset}, BOOT0 on GPIO{boot0})");
     }
     cfg.settings = match (args.settings, args.no_settings || args.fake) {
         (Some(path), _) => Some(path),

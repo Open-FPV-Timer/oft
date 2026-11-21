@@ -3,15 +3,23 @@
 # Run on the timer itself, with sudo, from a folder holding the `oftd` binary built for it
 # (cross/build-pi.sh):
 #
-#   sudo ./install-service.sh [serial port]        default port: /dev/ttyAMA0
+#   sudo ./install-service.sh [serial port] [more oftd options]     default port: /dev/ttyAMA0
+#
+# On a RotorHazard-style board whose Node is an STM32 (NuclearHazard and the like), add the
+# GPIOs of its reset and BOOT0 lines so the Timer page can update the Node's firmware:
+#
+#   sudo ./install-service.sh /dev/ttyAMA0 --stm32-reset-gpio 17 --stm32-boot0-gpio 27
 #
 # It copies oftd to /usr/local/bin, and installs and starts oftd.service, which runs as the
-# user who called sudo. That user needs the `dialout` group for the serial port, and keeps
+# user who called sudo. That user needs the `dialout` group for the serial port (and `gpio`
+# to update an STM32 Node), and keeps
 # the saved settings in ~/.config/oftd/settings.json. Run again to update oftd.
 # To remove: sudo systemctl disable --now oftd && sudo rm /etc/systemd/system/oftd.service
 # GPL-3.0-or-later.
 set -e
 PORT="${1:-/dev/ttyAMA0}"
+[ $# -gt 0 ] && shift
+EXTRA="$*"
 RUN_AS="${SUDO_USER:-$(id -un)}"
 cd "$(dirname "$0")"
 [ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
@@ -29,7 +37,7 @@ Wants=network-online.target
 
 [Service]
 User=$RUN_AS
-ExecStart=/usr/local/bin/oftd --serial $PORT
+ExecStart=/usr/local/bin/oftd --serial $PORT${EXTRA:+ $EXTRA}
 Restart=on-failure
 RestartSec=2
 
