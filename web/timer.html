@@ -136,6 +136,7 @@
     <a href="#network" data-page="network" id="nav-network" hidden>Network</a>
     <a href="#firmware" data-page="firmware">Firmware</a>
     <a href="#diagnostics" data-page="diagnostics">Diagnostics<span class="dot" id="nav-alert" hidden title="Link errors are being counted"></span></a>
+    <a href="#advanced" data-page="advanced" id="nav-advanced" hidden>Advanced</a>
   </nav>
 </div></div>
 
@@ -336,6 +337,29 @@
   </div>
 </section>
 </div>
+
+<!-- ================================================================ Advanced -->
+<div class="page" id="p-advanced" hidden>
+<section>
+  <h3>Node wiring pins <button type="button" class="tip" data-tip="Which of the Timer's header pins each wire to the Node is on. Only change these if your board is wired differently from the wiring diagram. Used from the next restart. A wrong choice cannot lock you out: the page stays reachable, the Node just stays silent until the pins match the wiring." aria-label="Help">?</button></h3>
+  <dl class="facts">
+    <dt>In use</dt><dd id="pins-using">-</dd>
+  </dl>
+  <div id="pins-pending" class="state" hidden><span class="pill warn">Saved pins differ. They apply when the Timer restarts.</span></div>
+  <div class="row">
+    <label class="field"><span>Data to the Node <button type="button" class="tip" data-tip="The Timer's serial transmit, wired to the Node's RX (D7 on a XIAO ESP32-C5). Only some pins can do this." aria-label="Help">?</button></span><select id="pin-tx"></select></label>
+    <label class="field"><span>Data from the Node <button type="button" class="tip" data-tip="The Timer's serial receive, wired to the Node's TX (D6 on a XIAO ESP32-C5). Only some pins can do this." aria-label="Help">?</button></span><select id="pin-rx"></select></label>
+    <label class="field"><span>SYNC <button type="button" class="tip" data-tip="The clock pulse to the Node. The Node's own SYNC pin is set in the Node's GPIO configuration." aria-label="Help">?</button></span><select id="pin-sync"></select></label>
+    <label class="field"><span>Node reset (EN)</span><select id="pin-en"></select></label>
+    <label class="field"><span>Node boot (BOOT)</span><select id="pin-boot"></select></label>
+  </div>
+  <div class="row">
+    <button class="btn" id="pins-save">Save pins</button>
+    <button class="btn ghost" id="pins-default">Back to the defaults</button>
+    <button class="btn ghost" id="pins-restart">Restart the Timer</button>
+  </div>
+</section>
+</div>
 </main>
 
 <div id="toasts" aria-live="polite"></div>
@@ -420,10 +444,10 @@
   window.addEventListener("scroll", hideTip, true);
 
   // ---------------------------------------------------------------- pages
-  const PAGES = ["live", "setup", "network", "firmware", "diagnostics"];
+  const PAGES = ["live", "setup", "network", "firmware", "diagnostics", "advanced"];
   function showPage() {
     let p = location.hash.slice(1);
-    if (!PAGES.includes(p) || (p === "network" && $("nav-network").hidden)) p = "live";
+    if (!PAGES.includes(p) || (p === "network" && $("nav-network").hidden) || (p === "advanced" && $("nav-advanced").hidden)) p = "live";
     for (const n of PAGES) $("p-" + n).hidden = n !== p;
     for (const a of $("nav").children) a.classList.toggle("on", a.dataset.page === p);
     hideTip();
@@ -475,6 +499,8 @@
     $("net-name").textContent = `http://${String(info.id).toLowerCase()}.local:${location.port || 80}/ where .local names resolve`;
     if (persist) loadSaveState(); else { saveState = null; setupState(); }
     if (c.network && !netDirty) loadNetwork();
+    if ($("nav-advanced").hidden !== !c.pins) { $("nav-advanced").hidden = !c.pins; showPage(); }
+    if (c.pins && !pinsDirty) loadPins();
     if (bootId && bootId !== info.boot_id) { note(persist ? "The Timer restarted." : "The Timer restarted; settings are back to their defaults."); resetData(); setDirty(false); await loadConfig(); }
     bootId = info.boot_id;
   }
@@ -689,10 +715,43 @@
       done("Network settings saved. Restart the Timer to use them.");
     } catch (e) { netDirty = true; fail("Could not save network settings: " + e.message); }
   });
-  $("restart").addEventListener("click", async () => {
+  async function restartTimer() {
     if (!(await ask({ title: "Restart the Timer?", body: "Timing stops for a few seconds. Settings that are applied but not saved are lost.", ok: "Restart", danger: true }))) return;
     try { await json("/restart", { method: "POST" }); note("The Timer is restarting. If its address changes, open the new address."); }
     catch (e) { fail("Could not restart: " + e.message); }
+  }
+  $("restart").addEventListener("click", restartTimer);
+  $("pins-restart").addEventListener("click", restartTimer);
+
+  // ---------------------------------------------------------------- advanced: Node wiring pins
+  const PIN_KEYS = ["tx", "rx", "sync", "en", "boot"];
+  const PIN_NAMES = { tx: "data to the Node", rx: "data from the Node", sync: "SYNC", en: "reset", boot: "boot" };
+  let pinsDirty = false, pinDefaults = null;
+  const pinsText = (p) => PIN_KEYS.map((k) => `${PIN_NAMES[k]} GP${p[k]}`).join(", ");
+  function setPins(p) { for (const k of PIN_KEYS) $("pin-" + k).value = String(p[k]); }
+  function showPins(s) {
+    pinDefaults = s.defaults;
+    $("pins-using").textContent = pinsText(s.using);
+    $("pins-pending").hidden = !s.restart_needed;
+    if (pinsDirty) return;
+    for (const k of PIN_KEYS) {
+      const list = s.choices[k] || s.choices.out;
+      $("pin-" + k).replaceChildren(...list.map((n) => new Option(`GP${n}` + (n === s.defaults[k] ? " (default)" : ""), String(n))));
+    }
+    setPins(s.saved);
+  }
+  async function loadPins() { try { showPins(await json("/pins")); } catch { /* older firmware */ } }
+  for (const k of PIN_KEYS) $("pin-" + k).addEventListener("change", () => { pinsDirty = true; });
+  $("pins-default").addEventListener("click", () => { if (pinDefaults) { setPins(pinDefaults); pinsDirty = true; } });
+  $("pins-save").addEventListener("click", async () => {
+    const body = Object.fromEntries(PIN_KEYS.map((k) => [k, Number($("pin-" + k).value)]));
+    const clash = PIN_KEYS.find((k, i) => PIN_KEYS.slice(0, i).some((o) => body[o] === body[k]));
+    if (clash) return fail(`GP${body[clash]} is chosen twice. Each wire needs its own pin.`);
+    try {
+      pinsDirty = false;
+      showPins(await json("/pins", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+      done("Pins saved. Restart the Timer to use them.");
+    } catch (e) { pinsDirty = true; fail("Could not save the pins: " + e.message); }
   });
 
   // ---------------------------------------------------------------- status
