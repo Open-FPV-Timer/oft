@@ -52,7 +52,12 @@ bench/conformance.py --fake                          # builds and checks oftd --
 bench/conformance.py http://192.168.1.50:7270        # any Timer; safe on one in use
 ```
 
-`cross/build-pi.sh` builds `oftd` for a 64-bit Raspberry Pi in Docker.
+## On a Raspberry Pi timer
+
+`cross/build-pi.sh` builds `oftd` for a 64-bit Raspberry Pi in Docker. Copy the binary and
+`dist/install-service.sh` to the Pi and run `sudo ./install-service.sh` there: it installs
+`oftd` as a service on the Pi's UART (`/dev/ttyAMA0`), started at every boot. Run it again
+to update.
 
 ## Design rules
 
