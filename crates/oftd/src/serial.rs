@@ -2,7 +2,7 @@
 //! on a blocking thread and are handed over through a channel so `Timer::run`'s loop stays
 //! non-blocking. No SYNC wire on a serial link: the clock comes from ping fit.
 
-use crate::link::NodeLink;
+use crate::link::{BootLine, NodeLink};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -87,13 +87,13 @@ impl NodeLink for SerialLink {
         format!("serial:{}", self.path)
     }
 
-    fn bootloader_mode(&mut self, on: bool) -> std::io::Result<()> {
-        if on {
+    fn bootloader_mode(&mut self, line: Option<BootLine>) -> std::io::Result<()> {
+        if let Some(line) = line {
             self.paused.store(true, Ordering::Relaxed);
             thread::sleep(Duration::from_millis(150)); // the reader's read in progress times out
             while self.rx.try_recv().is_ok() {}
-            self.port.set_baud_rate(crate::stm32::BOOT_BAUD)?;
-            self.port.set_parity(serialport::Parity::Even)?;
+            self.port.set_baud_rate(line.baud)?;
+            self.port.set_parity(if line.even_parity { serialport::Parity::Even } else { serialport::Parity::None })?;
         } else {
             // Put back as much as possible even if one step fails.
             let parity = self.port.set_parity(serialport::Parity::None);

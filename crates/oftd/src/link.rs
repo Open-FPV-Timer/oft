@@ -14,9 +14,9 @@ pub trait NodeLink: Send {
     fn describe(&self) -> String;
 
     /// For a firmware update over the same wires (`nodefw.rs`): stop reading the Node link
-    /// and set the line up for the chip's bootloader, or put it back. The `raw_*` calls
-    /// work in between. Only a real serial port can do this.
-    fn bootloader_mode(&mut self, _on: bool) -> std::io::Result<()> {
+    /// and set the line up for the chip's bootloader (`Some`), or put it back (`None`). The
+    /// `raw_*` calls work in between. Only a real serial port can do this.
+    fn bootloader_mode(&mut self, _line: Option<BootLine>) -> std::io::Result<()> {
         Err(std::io::ErrorKind::Unsupported.into())
     }
     fn raw_write(&mut self, _data: &[u8]) -> std::io::Result<()> {
@@ -27,6 +27,13 @@ pub trait NodeLink: Send {
         Err(std::io::ErrorKind::Unsupported.into())
     }
     fn raw_discard(&mut self) {}
+}
+
+/// How a chip's bootloader wants the serial line: 8 data bits, one stop bit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BootLine {
+    pub baud: u32,
+    pub even_parity: bool,
 }
 
 /// The simulator, in process. `read` advances the scene to `t_timer` first.

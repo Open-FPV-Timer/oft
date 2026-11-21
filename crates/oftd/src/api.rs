@@ -20,7 +20,8 @@ pub fn router(timer: Arc<Timer>) -> Router {
         .route("/info", get(info))
         .route("/config", get(get_config).put(put_config))
         .route("/config/save", get(get_config_save).post(post_config_save).delete(delete_config_save))
-        .route("/fw/node", get(get_fw_node).post(post_fw_node))
+        // A C5's firmware can outgrow the default 2 MB body limit.
+        .route("/fw/node", get(get_fw_node).post(post_fw_node).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/status", get(status))
         .route("/time", get(time))
         .route("/crossings", get(crossings))
@@ -90,18 +91,24 @@ async fn delete_config_save(State(t): State<Arc<Timer>>) -> Response {
 /// The Node update in progress or the last one's result; 404 on a Timer that cannot
 /// update its Node.
 async fn get_fw_node(State(t): State<Arc<Timer>>) -> Response {
-    if t.cfg.stm32.is_none() {
+    if t.cfg.node_fw.is_none() {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "this Timer cannot update its Node"}))).into_response();
     }
     Json(t.node_fw.lock().unwrap().clone()).into_response()
 }
 
+#[derive(Deserialize)]
+struct FwNodeQ {
+    /// Where in an ESP32 Node's flash the file goes; the firmware's place if absent.
+    offset: Option<u32>,
+}
+
 /// Start a Node update; the body is the firmware file.
-async fn post_fw_node(State(t): State<Arc<Timer>>, body: Bytes) -> Response {
-    if t.cfg.stm32.is_none() {
+async fn post_fw_node(State(t): State<Arc<Timer>>, Query(q): Query<FwNodeQ>, body: Bytes) -> Response {
+    if t.cfg.node_fw.is_none() {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "this Timer cannot update its Node"}))).into_response();
     }
-    match crate::nodefw::start(t, body.to_vec()) {
+    match crate::nodefw::start(t, body.to_vec(), q.offset) {
         Ok(state) => Json(state).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e}))).into_response(),
     }

@@ -67,6 +67,11 @@ firmware (`/fw/node`), as the RP2350 Timer does for a C5:
 sudo ./install-service.sh /dev/ttyAMA0 --stm32-reset-gpio 17 --stm32-boot0-gpio 27
 ```
 
+For an ESP32-C5 Node wired to the Pi's UART (the C5's D6/D7) with its EN and BOOT pins on
+two GPIOs, the same works with `--esp-en-gpio <n> --esp-boot-gpio <n>`. The protocol is the
+`oft-esprom` crate, which the RP2350 Timer uses too. A C5 on the Pi's USB is not updated by
+`oftd` yet: flash it over its own USB port.
+
 The first time it replaces firmware that is not an OFT Node's, it saves what was on the chip
 as `~/.config/oftd/node-backup-<hash>.bin`.
 

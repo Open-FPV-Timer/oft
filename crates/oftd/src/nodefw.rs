@@ -1,9 +1,12 @@
-//! Updating the Node's firmware from the Timer (`/fw/node`), for a Node that is an STM32
-//! on the Pi's own UART with its reset and BOOT0 lines on two GPIOs (RotorHazard-style
-//! boards such as the NuclearHazard). The Timer stops talking to the Node, restarts it into
-//! its ROM bootloader, writes and checks the file, and restarts it into the new firmware.
+//! Updating the Node's firmware from the Timer (`/fw/node`), for a Node on the Pi's own
+//! UART with its reset and boot-select lines on two GPIOs: an STM32 (RotorHazard-style
+//! boards such as the NuclearHazard) or an ESP32-C5. The Timer stops talking to the Node,
+//! restarts it into its ROM bootloader, writes and checks the file, and restarts it into
+//! the new firmware.
 
-use crate::stm32::{self, Step, Wire};
+use crate::link::BootLine;
+use crate::stm32::{self, Wire};
+use crate::{esp, stm32::Step};
 use crate::timer::Timer;
 use serde::Serialize;
 use std::io;
@@ -20,27 +23,63 @@ pub struct Stm32Pins {
     pub boot0: u8,
 }
 
-impl Stm32Pins {
-    /// Through Raspberry Pi OS's `pinctrl`, which needs no root for a user in `gpio`.
-    fn set(pin: u8, mode: &[&str]) -> Result<(), String> {
-        let out = Command::new("pinctrl").arg("set").arg(pin.to_string()).args(mode).output().map_err(|e| format!("cannot run pinctrl: {e}"))?;
-        if !out.status.success() {
-            return Err(format!("pinctrl could not set GPIO{pin}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+/// The GPIOs (BCM numbers) wired to an ESP32's EN (reset) and BOOT pins.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EspPins {
+    pub en: u8,
+    pub boot: u8,
+}
+
+/// The kind of Node this Timer can update, and the pins that restart it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NodeFlasher {
+    Stm32(Stm32Pins),
+    Esp(EspPins),
+}
+
+/// Through Raspberry Pi OS's `pinctrl`, which needs no root for a user in `gpio`.
+fn set_pin(pin: u8, mode: &[&str]) -> Result<(), String> {
+    let out = Command::new("pinctrl").arg("set").arg(pin.to_string()).args(mode).output().map_err(|e| format!("cannot run pinctrl: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("pinctrl could not set GPIO{pin}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(())
+}
+
+impl NodeFlasher {
+    /// Restart the Node, into its bootloader or its firmware.
+    pub fn restart(&self, bootloader: bool) -> Result<(), String> {
+        match *self {
+            NodeFlasher::Stm32(p) => {
+                set_pin(p.boot0, if bootloader { &["op", "dh"] } else { &["op", "dl"] })?;
+                set_pin(p.reset, &["op", "dl"])?;
+                std::thread::sleep(Duration::from_millis(50));
+                set_pin(p.reset, &["ip", "pn"])?; // released: the STM32 pulls its own reset line up
+                std::thread::sleep(Duration::from_millis(100));
+                if !bootloader {
+                    set_pin(p.boot0, &["ip", "pd"])?;
+                }
+            }
+            // As the RP2350 Timer does it: BOOT held low through a reset means download
+            // mode. Both lines are released afterwards; the board pulls them up itself.
+            NodeFlasher::Esp(p) => {
+                set_pin(p.boot, if bootloader { &["op", "dl"] } else { &["op", "dh"] })?;
+                set_pin(p.en, &["op", "dl"])?;
+                std::thread::sleep(Duration::from_millis(20));
+                set_pin(p.en, &["op", "dh"])?;
+                std::thread::sleep(Duration::from_millis(50));
+                set_pin(p.en, &["ip", "pn"])?;
+                set_pin(p.boot, &["ip", "pn"])?;
+            }
         }
         Ok(())
     }
 
-    /// Restart the STM32, into its bootloader or its firmware.
-    pub fn restart(&self, bootloader: bool) -> Result<(), String> {
-        Self::set(self.boot0, if bootloader { &["op", "dh"] } else { &["op", "dl"] })?;
-        Self::set(self.reset, &["op", "dl"])?;
-        std::thread::sleep(Duration::from_millis(50));
-        Self::set(self.reset, &["ip", "pn"])?; // released: the STM32 pulls its own reset line up
-        std::thread::sleep(Duration::from_millis(100));
-        if !bootloader {
-            Self::set(self.boot0, &["ip", "pd"])?;
+    fn line(&self) -> BootLine {
+        match self {
+            NodeFlasher::Stm32(_) => BootLine { baud: stm32::BOOT_BAUD, even_parity: true },
+            NodeFlasher::Esp(_) => BootLine { baud: esp::ROM_BAUD, even_parity: false },
         }
-        Ok(())
     }
 }
 
@@ -91,10 +130,16 @@ fn save_backup(dir: &std::path::Path, data: &[u8]) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Start an update with `image`. Returns the state to answer with, or why it cannot start.
-pub fn start(timer: Arc<Timer>, image: Vec<u8>) -> Result<NodeFw, String> {
-    let pins = timer.cfg.stm32.ok_or("this Timer cannot update its Node")?;
-    stm32::check_image(&image)?;
+/// Start an update with `image`. `offset` is where in an ESP32's flash it goes (the
+/// firmware's place if not given); an STM32 has only the one place. Returns the state to
+/// answer with, or why it cannot start.
+pub fn start(timer: Arc<Timer>, image: Vec<u8>, offset: Option<u32>) -> Result<NodeFw, String> {
+    let pins = timer.cfg.node_fw.ok_or("this Timer cannot update its Node")?;
+    let offset = offset.unwrap_or(esp::APP_OFFSET);
+    match pins {
+        NodeFlasher::Stm32(_) => stm32::check_image(&image)?,
+        NodeFlasher::Esp(_) => esp::check_image(offset, &image)?,
+    }
     {
         let mut st = timer.node_fw.lock().unwrap();
         if st.running {
@@ -103,19 +148,19 @@ pub fn start(timer: Arc<Timer>, image: Vec<u8>) -> Result<NodeFw, String> {
         *st = NodeFw { running: true, step: Step::Connecting.name(), bytes: image.len(), ..NodeFw::default() };
     }
     let state = timer.node_fw.lock().unwrap().clone();
-    std::thread::Builder::new().name("oft-node-fw".into()).spawn(move || run(timer, pins, image)).map_err(|e| {
+    std::thread::Builder::new().name("oft-node-fw".into()).spawn(move || run(timer, pins, image, offset)).map_err(|e| {
         format!("could not start the update: {e}")
     })?;
     Ok(state)
 }
 
-fn run(timer: Arc<Timer>, pins: Stm32Pins, image: Vec<u8>) {
+fn run(timer: Arc<Timer>, pins: NodeFlasher, image: Vec<u8>, offset: u32) {
     let began = Instant::now();
     // Firmware that has introduced itself is ours and can be built again; anything else
     // (the board's original firmware) is read out and kept before it is erased.
     let known = timer.hellos.load(Ordering::Relaxed) > 0;
     let backup_dir = timer.cfg.settings.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()));
-    let mut backup = (!known && backup_dir.is_some()).then(Vec::new);
+    let mut backup = (!known && backup_dir.is_some() && matches!(pins, NodeFlasher::Stm32(_))).then(Vec::new);
     let mut backup_path = None;
 
     // The driver loop leaves the link alone while this is set; give it a tick to notice.
@@ -124,19 +169,23 @@ fn run(timer: Arc<Timer>, pins: Stm32Pins, image: Vec<u8>) {
     let result = {
         let mut link = timer.link.lock().unwrap();
         let r = (|| {
-            link.bootloader_mode(true).map_err(|e| format!("could not switch the serial port: {e}"))?;
+            link.bootloader_mode(Some(pins.line())).map_err(|e| format!("could not switch the serial port: {e}"))?;
             pins.restart(true)?;
             let t = &timer;
-            let chip = stm32::flash(&mut LinkWire(&mut **link), &image, backup.as_mut(), &mut |step, done| {
+            let mut progress = |step: &'static str, done: usize| {
                 let mut st = t.node_fw.lock().unwrap();
-                st.step = step.name();
+                st.step = step;
                 st.written = done;
-            })?;
-            Ok::<_, String>(chip)
+            };
+            let mut wire = LinkWire(&mut **link);
+            match pins {
+                NodeFlasher::Stm32(_) => stm32::flash(&mut wire, &image, backup.as_mut(), &mut |step: Step, done| progress(step.name(), done)).map(|chip| chip.name),
+                NodeFlasher::Esp(_) => esp::flash(&mut wire, &image, offset, &mut progress).map(|_| "ESP32-C5"),
+            }
         })();
         // Whatever happened, leave the STM32 running firmware and the port as it was.
         let restarted = pins.restart(false);
-        let _ = link.bootloader_mode(false);
+        let _ = link.bootloader_mode(None);
         r.and_then(|chip| restarted.map(|_| chip))
     };
     if let (Some(data), Some(dir)) = (backup.as_ref().filter(|d| !d.is_empty()), backup_dir.as_ref()) {
@@ -160,11 +209,12 @@ fn run(timer: Arc<Timer>, pins: Stm32Pins, image: Vec<u8>) {
         st.backup = backup_path.clone();
     };
     match &result {
-        Ok(chip) => eprintln!("oftd: Node updated ({} bytes to a {})", image.len(), chip.name),
+        Ok(chip) => eprintln!("oftd: Node updated ({} bytes to a {chip})", image.len()),
         Err(e) => eprintln!("oftd: Node update failed: {e}"),
     }
     timer.node_fw.lock().unwrap().step = "restarting";
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // A C5 calibrates its radio before it speaks, longer on its first start.
+    let deadline = Instant::now() + Duration::from_secs(if matches!(pins, NodeFlasher::Esp(_)) { 40 } else { 10 });
     while Instant::now() < deadline && timer.hellos.load(Ordering::Relaxed) == before {
         std::thread::sleep(Duration::from_millis(100));
     }

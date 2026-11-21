@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 oft-nodelink.workspace = true
 oft-core.workspace = true
+oft-esprom.workspace = true
+md-5 = "0.10"
 oft-sim.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "signal"] }
 axum = { version = "0.8", features = ["ws", "json", "query"] }

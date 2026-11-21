@@ -50,6 +50,14 @@ struct Args {
     /// See --stm32-reset-gpio.
     #[arg(long, requires = "stm32_reset_gpio")]
     stm32_boot0_gpio: Option<u8>,
+    /// The Node is an ESP32-C5 on the serial port (its D6/D7 pins) with its EN pin on this
+    /// GPIO (BCM number) and BOOT on --esp-boot-gpio. With both, the Timer page can update
+    /// the Node's firmware.
+    #[arg(long, requires = "esp_boot_gpio", requires = "serial", conflicts_with = "stm32_reset_gpio")]
+    esp_en_gpio: Option<u8>,
+    /// See --esp-en-gpio.
+    #[arg(long, requires = "esp_en_gpio")]
+    esp_boot_gpio: Option<u8>,
     /// Timer id advertised to clients.
     #[arg(long)]
     id: Option<String>,
@@ -99,8 +107,12 @@ async fn main() {
         cfg.id = id;
     }
     if let (Some(reset), Some(boot0)) = (args.stm32_reset_gpio, args.stm32_boot0_gpio) {
-        cfg.stm32 = Some(oftd::nodefw::Stm32Pins { reset, boot0 });
+        cfg.node_fw = Some(oftd::nodefw::NodeFlasher::Stm32(oftd::nodefw::Stm32Pins { reset, boot0 }));
         eprintln!("oftd: can update an STM32 Node (reset on GPIO{reset}, BOOT0 on GPIO{boot0})");
+    }
+    if let (Some(en), Some(boot)) = (args.esp_en_gpio, args.esp_boot_gpio) {
+        cfg.node_fw = Some(oftd::nodefw::NodeFlasher::Esp(oftd::nodefw::EspPins { en, boot }));
+        eprintln!("oftd: can update an ESP32-C5 Node (EN on GPIO{en}, BOOT on GPIO{boot})");
     }
     cfg.settings = match (args.settings, args.no_settings || args.fake) {
         (Some(path), _) => Some(path),

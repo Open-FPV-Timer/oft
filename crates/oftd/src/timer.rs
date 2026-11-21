@@ -29,8 +29,8 @@ pub struct TimerConfig {
     pub status_period: Duration,
     /// The settings file (`settings.rs`). `None`: nothing is kept across a restart.
     pub settings: Option<std::path::PathBuf>,
-    /// The Node is an STM32 this Timer can restart into its bootloader (`nodefw.rs`).
-    pub stm32: Option<crate::nodefw::Stm32Pins>,
+    /// A Node this Timer can restart into its bootloader and update (`nodefw.rs`).
+    pub node_fw: Option<crate::nodefw::NodeFlasher>,
 }
 
 /// `oft-` and four hex digits that stay the same on this machine (from `/etc/machine-id`),
@@ -57,7 +57,7 @@ impl Default for TimerConfig {
             tick: Duration::from_millis(20),
             status_period: Duration::from_secs(1),
             settings: None,
-            stm32: None,
+            node_fw: None,
         }
     }
 }
@@ -332,8 +332,10 @@ impl Timer {
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
             },
         });
-        if self.cfg.stm32.is_some() {
-            v["capabilities"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false, "node_image": "stm32f1" });
+        match self.cfg.node_fw {
+            Some(crate::nodefw::NodeFlasher::Stm32(_)) => v["capabilities"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false, "node_image": "stm32f1" }),
+            Some(crate::nodefw::NodeFlasher::Esp(_)) => v["capabilities"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false }),
+            None => {}
         }
         v
     }

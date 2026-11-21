@@ -1,0 +1,10 @@
+[package]
+name = "oft-esprom"
+description = "The Espressif ROM bootloader's serial protocol, as far as a Timer needs it to write an ESP32 Node's flash: no I/O, no allocation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

@@ -5,6 +5,7 @@
 //! in-memory [`oft_sim::fake_node::FakeNode`] (`--fake`) or, later, a serial port.
 
 pub mod api;
+pub mod esp;
 pub mod link;
 pub mod mdns;
 pub mod nodefw;
