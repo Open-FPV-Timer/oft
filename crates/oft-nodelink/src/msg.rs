@@ -63,9 +63,60 @@ impl core::ops::BitOr for Features {
     }
 }
 
+/// Longest chip name a `Hello` carries.
+pub const MAX_CHIP_NAME: usize = 16;
+
+/// What a Node is built on, as the Node names itself: `esp32c5`, `stm32f1-rx5808`. Shown to
+/// people (the `chip` of a node in `/info`); nothing keys on it. Lower-case letters, digits,
+/// `-`, `_` and `.` only, so it can go into JSON and file names as it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChipName {
+    len: u8,
+    bytes: [u8; MAX_CHIP_NAME],
+}
+
+impl ChipName {
+    /// No name: what firmware from before the field sends.
+    pub const fn empty() -> Self {
+        Self { len: 0, bytes: [0; MAX_CHIP_NAME] }
+    }
+
+    /// `name`, or no name if it is too long or has a character outside the allowed set.
+    pub const fn new(name: &str) -> Self {
+        Self::from_bytes(name.as_bytes())
+    }
+
+    pub const fn from_bytes(name: &[u8]) -> Self {
+        if name.len() > MAX_CHIP_NAME {
+            return Self::empty();
+        }
+        let mut bytes = [0; MAX_CHIP_NAME];
+        let mut k = 0;
+        while k < name.len() {
+            let c = name[k];
+            if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'_' || c == b'.') {
+                return Self::empty();
+            }
+            bytes[k] = c;
+            k += 1;
+        }
+        Self { len: name.len() as u8, bytes }
+    }
+
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 /// Node → Timer on boot and on request.
 ///
 /// Body: `chip_id:u64 fw:[u8;3] link_version:u8 freq_min:u16 freq_max:u16 max_seats:u8 features:u16`
+/// then, if the Node names its chip, `chip_len:u8 chip:[u8; chip_len]`. A Node with no name
+/// sends nothing after `features`, which is also what firmware from before the field sends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hello {
     pub chip_id: u64,
@@ -76,6 +127,19 @@ pub struct Hello {
     pub freq_max_mhz: u16,
     pub max_seats: u8,
     pub features: Features,
+    pub chip: ChipName,
+}
+
+impl Hello {
+    /// The chip to show for this Node. Only ESP32-C5 Nodes existed before Nodes named
+    /// their chip, so a Node with no name is one of those.
+    pub fn chip_name(&self) -> &str {
+        if self.chip.is_empty() {
+            "esp32c5"
+        } else {
+            self.chip.as_str()
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Plan
@@ -293,6 +357,10 @@ impl<'a> Reader<'a> {
     fn u8(&mut self) -> Result<u8, DecodeError> {
         Ok(self.take::<1>()?[0])
     }
+    /// Whatever has not been read yet.
+    fn rest(&self) -> &'a [u8] {
+        &self.buf[self.pos..]
+    }
     fn u16(&mut self) -> Result<u16, DecodeError> {
         Ok(u16::from_le_bytes(self.take()?))
     }
@@ -337,6 +405,10 @@ impl Message {
                 w.u16(h.freq_max_mhz)?;
                 w.u8(h.max_seats)?;
                 w.u16(h.features.0)?;
+                if !h.chip.is_empty() {
+                    w.u8(h.chip.as_str().len() as u8)?;
+                    w.put(h.chip.as_str().as_bytes())?;
+                }
             }
             Message::Plan(p) => {
                 w.u32(p.dwell_us)?;
@@ -401,6 +473,12 @@ impl Message {
                 freq_max_mhz: r.u16()?,
                 max_seats: r.u8()?,
                 features: Features(r.u16()?),
+                // Optional, and never a reason to drop a Hello: a name that is cut short
+                // or not in the allowed characters reads as no name.
+                chip: match r.rest() {
+                    [n, name @ ..] if name.len() >= *n as usize => ChipName::from_bytes(&name[..*n as usize]),
+                    _ => ChipName::empty(),
+                },
             }),
             x if x == Kind::Plan as u8 => {
                 let mut p = Plan { dwell_us: r.u32()?, filter_bw_khz: r.u16()?, gain_index: r.u8()?, ..Plan::default() };
@@ -453,6 +531,36 @@ mod tests {
         assert_eq!(Message::decode(&[LINK_VERSION + 1, 0x10]), Err(DecodeError::Version(LINK_VERSION + 1)));
         assert_eq!(Message::decode(&[LINK_VERSION, 0x7F]), Err(DecodeError::UnknownType(0x7F)));
         assert_eq!(Message::decode(&[LINK_VERSION]), Err(DecodeError::Short));
+    }
+
+    #[test]
+    fn hello_chip_name_is_optional_and_never_costs_the_hello() {
+        let base = Hello { chip_id: 7, fw: [1, 2, 3], link_version: LINK_VERSION, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 4, features: Features::DFU, chip: ChipName::empty() };
+        let mut old = [0u8; 64];
+        let n_old = Message::Hello(base).encode(&mut old).unwrap();
+        // No name: the bytes firmware from before the field sends, shown as the only chip there was.
+        assert_eq!(n_old, 2 + 8 + 3 + 1 + 2 + 2 + 1 + 2);
+        let Ok(Message::Hello(h)) = Message::decode(&old[..n_old]) else { panic!() };
+        assert_eq!((h, h.chip_name()), (base, "esp32c5"));
+
+        let named = Hello { chip: ChipName::new("stm32f1-rx5808"), ..base };
+        let mut buf = [0u8; 64];
+        let n = Message::Hello(named).encode(&mut buf).unwrap();
+        assert_eq!(n, n_old + 1 + 14);
+        let Ok(Message::Hello(h)) = Message::decode(&buf[..n]) else { panic!() };
+        assert_eq!((h, h.chip_name()), (named, "stm32f1-rx5808"));
+
+        // A name cut short, longer than allowed, or with a character that could break JSON
+        // reads as no name; the rest of the Hello still counts.
+        let Ok(Message::Hello(h)) = Message::decode(&buf[..n - 3]) else { panic!() };
+        assert_eq!(h, base);
+        let mut bad = buf;
+        bad[n_old + 3] = b'"';
+        let Ok(Message::Hello(h)) = Message::decode(&bad[..n]) else { panic!() };
+        assert_eq!(h, base);
+        assert!(ChipName::new("seventeen-letters").is_empty());
+        assert!(ChipName::new("Upper").is_empty());
+        assert_eq!(ChipName::new("sixteen-letters.").as_str(), "sixteen-letters.");
     }
 
     #[test]

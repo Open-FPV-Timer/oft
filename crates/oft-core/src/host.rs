@@ -339,7 +339,7 @@ mod tests {
         host.feed(&Message::SyncEdge(SyncEdge { edge_seq: 99, t_node: 1_550_000 }), 550_000 + 60_000, |_| {});
         assert_eq!(host.clock().len(), 10);
         // A Hello (Node reboot) clears the clock; the next edges resync without any seq agreement.
-        host.feed(&Message::Hello(Hello { chip_id: 1, fw: [0, 1, 0], link_version: 1, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 8, features: Features::SYNC }), 600_000, |_| {});
+        host.feed(&Message::Hello(Hello { chip_id: 1, fw: [0, 1, 0], link_version: 1, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 8, features: Features::SYNC, chip: Default::default() }), 600_000, |_| {});
         assert!(!host.clock().is_synced());
         for k in 13..=16u64 {
             let t = k * 50_000;

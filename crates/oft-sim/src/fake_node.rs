@@ -2,7 +2,7 @@
 //! the frames a real C5 would, from a [`Scene`]. Used by `oftd --fake` and the tests.
 
 use crate::{NodeClock, Rng, Scene};
-use oft_nodelink::msg::{Features, Hello, Message, Plan, Pong, SampleFlags, Samples, Status, SyncEdge, MAX_PLAN_SEATS};
+use oft_nodelink::msg::{ChipName, Features, Hello, Message, Plan, Pong, SampleFlags, Samples, Status, SyncEdge, MAX_PLAN_SEATS};
 use oft_nodelink::{encode_frame, FrameDecoder, MAX_FRAME};
 
 pub struct FakeNode {
@@ -61,6 +61,7 @@ impl FakeNode {
             freq_max_mhz: 5945,
             max_seats: 8,
             features: Features::SYNC | Features::DFU,
+            chip: ChipName::new("simulated"),
         })
     }
 

@@ -266,7 +266,7 @@ impl Timer {
             "calibrated": false,
             "nodes": hello.map(|h| vec![serde_json::json!({
                 "id": format!("{:012x}", h.chip_id),
-                "chip": "esp32c5",
+                "chip": h.chip_name(),
                 "fw": format!("{}.{}.{}", h.fw[0], h.fw[1], h.fw[2]),
                 "range_mhz": [h.freq_min_mhz, h.freq_max_mhz],
                 "max_seats": h.max_seats,

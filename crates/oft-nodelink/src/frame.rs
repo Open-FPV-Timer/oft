@@ -112,6 +112,7 @@ mod tests {
                 freq_max_mhz: 5945,
                 max_seats: 8,
                 features: Features::SYNC,
+                chip: ChipName::new("stm32f1-rx5808"),
             }),
             Message::Plan(plan),
             Message::Samples(samples),
@@ -222,7 +223,8 @@ mod vectors {
             samples.push(v).unwrap();
         }
         let msgs = [
-            ("hello", Message::Hello(Hello { chip_id: 0x0000_1122_3344_5566, fw: [0, 1, 0], link_version: LINK_VERSION, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 8, features: Features::SYNC | Features::DFU })),
+            ("hello", Message::Hello(Hello { chip_id: 0x0000_1122_3344_5566, fw: [0, 1, 0], link_version: LINK_VERSION, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 8, features: Features::SYNC | Features::DFU, chip: ChipName::empty() })),
+            ("hello_chip", Message::Hello(Hello { chip_id: 0x0000_1122_3344_5566, fw: [0, 1, 0], link_version: LINK_VERSION, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 8, features: Features::SYNC | Features::DFU, chip: ChipName::new("esp32c5") })),
             ("plan", Message::Plan(plan)),
             ("samples", Message::Samples(samples)),
             ("sync_edge", Message::SyncEdge(SyncEdge { edge_seq: 7, t_node: 123_456_789 })),
