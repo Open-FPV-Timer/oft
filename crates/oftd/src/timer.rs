@@ -318,6 +318,7 @@ impl Timer {
                 "fw": format!("{}.{}.{}", h.fw[0], h.fw[1], h.fw[2]),
                 "range_mhz": [h.freq_min_mhz, h.freq_max_mhz],
                 "max_seats": h.max_seats,
+                "level": { "unit": h.level().unit(), "scale": h.level().scale().parse::<f64>().unwrap_or(0.1) },
                 "link": link_name,
             })]).filter(|_| !flashing).unwrap_or_default(),
             "seats": inner.config.seats.iter().filter(|s| s.enabled).map(|s| serde_json::json!({

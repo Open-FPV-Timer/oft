@@ -27,7 +27,7 @@ OPT_INT = (int, None)
 THRESHOLD = ({"mode": "auto", "snr_enter": int, "hysteresis": int}, {"mode": "manual", "enter": int, "exit": int})
 SEAT_CONFIG = {"seat": int, "freq_mhz": int, "enabled": bool, "threshold?": THRESHOLD}
 CONFIG = {"seats": [SEAT_CONFIG], "threshold": THRESHOLD, "min_lap_ms": int, "exit_hold_ms": int, "pass_window_ms": int}
-NODE = {"id": str, "chip": str, "fw": str, "range_mhz": [int], "max_seats": int, "link": str}
+NODE = {"id": str, "chip": str, "fw": str, "range_mhz": [int], "max_seats": int, "level": {"unit": str, "scale": NUM}, "link": str}
 INFO = {
     "id": str, "name": str, "boot_id": str, "proto": int, "host": str, "fw": str, "level": str, "calibrated": bool,
     "nodes": [NODE], "seats": [{"seat": int, "node": int, "rate_hz": int}], "capabilities": dict,

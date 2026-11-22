@@ -75,6 +75,16 @@ two GPIOs, the same works with `--esp-en-gpio <n> --esp-boot-gpio <n>`. The prot
 The first time it replaces firmware that is not an OFT Node's, it saves what was on the chip
 as `~/.config/oftd/node-backup-<hash>.bin`.
 
+## Level units
+
+A Node says what its level numbers measure (`oft_nodelink::msg::Level`): tenths of a dB for
+a Node that computes signal power (the C5), millivolts for one that reads a receiver's
+signal-strength pin (the STM32 + RX5808 Node). Samples, the noise floor, thresholds, `peak`
+and `snr` are all in that unit, and `oft-core` does not care which. Both Timers publish it
+as `nodes[].level` in `/info` (`{"unit":"dB","scale":0.1}` or `{"unit":"mV","scale":1}`), and
+`web/timer.html` labels everything from it. Clients must read it and not assume dB
+(spec §6.4).
+
 ## Design rules
 
 - Timestamps are taken on the Node and mapped to the Timer clock; network latency never

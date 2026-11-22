@@ -3,7 +3,9 @@
 //! - [`clock`]: maps a Node's µs clock onto the Timer clock from SYNC edges or ping/pong.
 //! - [`detect`]: turns a stream of band-power samples into [`Crossing`]s (`edge_mid`).
 //!
-//! Power values are **0.1 dB** integers, the same as on the Node link.
+//! Power values are integers in the Node's level unit, the same as on the Node link:
+//! **0.1 dB** for most Nodes, millivolts for one that says so (`oft_nodelink::msg::Level`).
+//! Nothing here depends on which; comments that say "0.1 dB" mean "one level count".
 
 #![no_std]
 #![forbid(unsafe_code)]

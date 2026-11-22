@@ -47,6 +47,9 @@ impl Features {
     pub const IQ_DUMP: Features = Features(1 << 1);
     /// Node can reboot into its ROM bootloader on `Dfu`.
     pub const DFU: Features = Features(1 << 2);
+    /// The Node's levels are millivolts on its receiver's signal-strength output, one per
+    /// count, not tenths of a dB. See [`Level`].
+    pub const LEVEL_MV: Features = Features(1 << 3);
 
     pub const fn empty() -> Self {
         Features(0)
@@ -130,7 +133,46 @@ pub struct Hello {
     pub chip: ChipName,
 }
 
+/// What a Node's level numbers measure. Every level a Node sends (`Samples` power and noise
+/// floor) and everything the Timer derives from them (floor, thresholds, peak, the
+/// peak-minus-floor it calls `snr`) is in this unit.
+///
+/// A Node that computes signal power reports tenths of a dB, relative to its own full
+/// scale. A Node that reads an analogue signal-strength pin (an RX5808's RSSI) reports the
+/// voltage: that output is not a straight line in dB, so calling it dB would be wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    TenthsDb,
+    Millivolts,
+}
+
+impl Level {
+    /// The unit to show a person.
+    pub const fn unit(self) -> &'static str {
+        match self {
+            Level::TenthsDb => "dB",
+            Level::Millivolts => "mV",
+        }
+    }
+    /// Multiply a level number by this to get it in `unit()`, as text for JSON.
+    pub const fn scale(self) -> &'static str {
+        match self {
+            Level::TenthsDb => "0.1",
+            Level::Millivolts => "1",
+        }
+    }
+}
+
 impl Hello {
+    /// What this Node's level numbers measure.
+    pub const fn level(&self) -> Level {
+        if self.features.contains(Features::LEVEL_MV) {
+            Level::Millivolts
+        } else {
+            Level::TenthsDb
+        }
+    }
+
     /// The chip to show for this Node. Only ESP32-C5 Nodes existed before Nodes named
     /// their chip, so a Node with no name is one of those.
     pub fn chip_name(&self) -> &str {
@@ -595,5 +637,13 @@ mod tests {
         let s = Samples::new(0, 1_000_000, 1000, 0, SampleFlags::empty());
         assert_eq!(s.time_of(0), 1_000_000);
         assert_eq!(s.time_of(5), 1_005_000);
+    }
+
+    #[test]
+    fn a_node_says_what_its_levels_measure() {
+        let mut h = Hello { chip_id: 1, fw: [0, 2, 0], link_version: LINK_VERSION, freq_min_mhz: 5645, freq_max_mhz: 5945, max_seats: 8, features: Features::DFU, chip: ChipName::empty() };
+        assert_eq!((h.level().unit(), h.level().scale()), ("dB", "0.1"));
+        h.features = Features::LEVEL_MV | Features::DFU;
+        assert_eq!((h.level().unit(), h.level().scale()), ("mV", "1"));
     }
 }

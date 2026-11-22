@@ -193,7 +193,7 @@
 </section>
 
 <section>
-  <h3>Detection <button type="button" class="tip" data-tip="When a pass counts as a crossing. Levels are on the same dB scale as the Live chart, so set them while watching a pass." aria-label="Help">?</button></h3>
+  <h3>Detection <button type="button" class="tip" data-tip="When a pass counts as a crossing. Levels are on the same scale as the Live chart, so set them while watching a pass. The unit is the Node's own: dB for a Node that measures signal power, millivolts for one that reads a receiver's signal-strength pin." aria-label="Help">?</button></h3>
   <div class="row" id="th-scope-row">
     <label class="field"><span>Levels for <button type="button" class="tip" data-tip="Shared levels apply to every seat that has none of its own. Pick a seat to give it its own levels." aria-label="Help">?</button></span><select id="th-scope"></select></label>
     <button class="btn ghost sm" id="th-unset" hidden style="align-self:flex-end">Use the shared levels for this seat</button>
@@ -379,7 +379,18 @@
   const API = "/oft/v1";
   const WINDOW_US = 15e6;
   const RACEBAND = [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917];
-  const db = (v) => (v == null ? "-" : (v / 10).toFixed(1) + " dB");
+  // Levels are in the Node's own unit (/info nodes[].level): tenths of a dB unless it says
+  // otherwise, e.g. millivolts from an RX5808's signal-strength pin.
+  let unit = { name: "dB", scale: 0.1, digits: 1 };
+  function setUnit(l) {
+    const scale = l && Number(l.scale) > 0 ? Number(l.scale) : 0.1, name = (l && l.unit) || "dB";
+    if (unit.name === name && unit.scale === scale) return false;
+    unit = { name, scale, digits: scale < 1 ? Math.min(3, Math.ceil(-Math.log10(scale))) : 0 };
+    return true;
+  }
+  const num = (v) => (v * unit.scale).toFixed(unit.digits);         // a level or a difference, in the unit
+  const raw = (text) => Math.round(Number(text) / unit.scale);       // back to the Timer's integer
+  const db = (v) => (v == null ? "-" : num(v) + " " + unit.name);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const json = async (path, opts) => {
     const r = await fetch(API + path, opts);
@@ -482,6 +493,8 @@
     $("ident").textContent = info.id;
     $("d-timer").textContent = `${info.id} · ${info.host} · protocol ${info.proto} · level ${info.level}`;
     $("fw-ver").textContent = `${info.fw} on ${info.host}` + (c["usb.console"] ? ", with the USB serial console" : "");
+    // The unit can change after the page loads: a Node introduces itself late, or is replaced.
+    if (setUnit(((info.nodes || [])[0] || {}).level) && draft) showLevels();
     const nodes = (info.nodes || []).map((n) => `${n.id} · ${n.chip} · firmware ${n.fw} · ${n.link}` + (n.range_mhz ? ` · ${n.range_mhz.join("–")} MHz` : ""));
     $("fw").textContent = $("node-ver").textContent = nodes.length ? nodes.join("; ") : "No Node has introduced itself yet.";
     $("fw-actions").hidden = !rp;
@@ -575,20 +588,21 @@
 
   function thLabels() {
     const manual = $("thmode").value === "manual";
-    $("th-a-label").textContent = manual ? "Enter, dB" : "Enter, dB above floor";
-    $("th-b-label").textContent = manual ? "Exit, dB" : "Exit, dB below enter";
+    $("th-a-label").textContent = manual ? `Enter, ${unit.name}` : `Enter, ${unit.name} above floor`;
+    $("th-b-label").textContent = manual ? `Exit, ${unit.name}` : `Exit, ${unit.name} below enter`;
+    for (const id of ["th-a", "th-b"]) $(id).step = unit.scale < 1 ? "0.5" : "5";
   }
   function showLevels() {
     const t = levelsOf();
     $("thmode").value = t.mode === "manual" ? "manual" : "auto";
-    $("th-a").value = ((t.mode === "manual" ? t.enter : t.snr_enter) / 10).toFixed(1);
-    $("th-b").value = ((t.mode === "manual" ? t.exit : t.hysteresis) / 10).toFixed(1);
+    $("th-a").value = num(t.mode === "manual" ? t.enter : t.snr_enter);
+    $("th-b").value = num(t.mode === "manual" ? t.exit : t.hysteresis);
     thLabels();
     $("th-unset").hidden = scope === "all" || !(draftSeat(scope) || {}).threshold;
   }
   // The Detection fields as a threshold, stored in the draft for the chosen scope.
   function storeLevels() {
-    const a = Math.round(Number($("th-a").value) * 10), b = Math.round(Number($("th-b").value) * 10);
+    const a = raw($("th-a").value), b = raw($("th-b").value);
     const t = $("thmode").value === "manual" ? { mode: "manual", enter: a, exit: b } : { mode: "auto", snr_enter: a, hysteresis: b };
     t.blank = $("th-a").value === "" || $("th-b").value === "";
     if (scope === "all") draft.threshold = t;
@@ -622,8 +636,8 @@
     thLabels();
     // Starting values for the other mode: the levels in use now, or the usual margins.
     const s = status && (status.seats || []).find((x) => x.seat === (scope === "all" ? seat : scope));
-    if ($("thmode").value === "manual" && s && s.enter != null) { $("th-a").value = (s.enter / 10).toFixed(1); $("th-b").value = (s.exit / 10).toFixed(1); }
-    else if ($("thmode").value === "auto") { $("th-a").value = "15.0"; $("th-b").value = "5.0"; }
+    if ($("thmode").value === "manual" && s && s.enter != null) { $("th-a").value = num(s.enter); $("th-b").value = num(s.exit); }
+    else if ($("thmode").value === "auto") { $("th-a").value = num(150); $("th-b").value = num(50); }
     storeLevels();
   });
   $("th-scope").addEventListener("change", () => { const v = $("th-scope").value; scope = v === "all" ? "all" : Number(v); showLevels(); });
@@ -781,7 +795,7 @@
     $("s-clients-t").hidden = st.clients == null;
     $("s-clients").textContent = st.clients == null ? "-" : st.clients;
     $("s-sig").textContent = s && s.rssi != null && s.floor != null
-      ? `Now ${db(s.rssi)} · floor ${db(s.floor)} · ${((s.rssi - s.floor) / 10).toFixed(1)} dB above floor · enter ${db(s.enter)} · exit ${db(s.exit)}`
+      ? `Now ${db(s.rssi)} · floor ${db(s.floor)} · ${db(s.rssi - s.floor)} above floor · enter ${db(s.enter)} · exit ${db(s.exit)}`
       : "No samples yet.";
     showRates();
 
@@ -890,8 +904,9 @@
     let peak = -Infinity, low = Infinity;
     for (const [t, p] of tr) if (t >= t0 && t <= now) { if (p > peak) peak = p; if (p < low) low = p; }
     const floor = s && s.floor != null ? s.floor : low, enter = s ? s.enter : null, exit = s ? s.exit : null;
-    // Scale follows the levels: from 5 dB below the floor (or the exit level) to 15 dB above
-    // the enter level, at least 45 dB wide, stretched if a visible peak would be cut off.
+    // Scale follows the levels: from 50 counts below the floor (or the exit level) to 150
+    // above the enter level, at least 450 wide, stretched if a visible peak would be cut off.
+    // (Counts are tenths of a dB or millivolts; the margins suit both.)
     const lo = Math.min(floor, exit == null ? floor : exit, low) - 50;
     const hi = Math.max((enter == null ? floor : enter) + 150, lo + 450, peak + 30);
     const x = (t) => ((t - t0) / WINDOW_US) * w, y = (p) => h - ((p - lo) / (hi - lo)) * h;
@@ -915,7 +930,7 @@
     g.stroke();
     g.fillStyle = col("--muted"); g.font = `${11 * dpr}px system-ui, sans-serif`;
     g.fillText(db(hi), 4 * dpr, 12 * dpr); g.fillText(db(lo), 4 * dpr, h - 4 * dpr);
-    $("c-info").textContent = `highest in view ${db(peak)}` + (s && s.floor != null ? ` (${((peak - s.floor) / 10).toFixed(1)} dB above floor)` : "") + (paused ? " · paused" : "");
+    $("c-info").textContent = `highest in view ${db(peak)}` + (s && s.floor != null ? ` (${db(peak - s.floor)} above floor)` : "") + (paused ? " · paused" : "");
   }
 
   // ---------------------------------------------------------------- firmware: USB update mode
