@@ -8,8 +8,10 @@ one description, below. Run it against each kind of Timer after changing either.
   bench/conformance.py http://host:7270 [more Timers...]
   bench/conformance.py --fake          build and start `oftd --fake`, and check that
 
-It is safe on a Timer in use: it reads, writes the config back unchanged, and sends two
-requests that must be refused. It never saves settings, restarts or flashes anything.
+It is safe on a Timer in use: it reads, writes the config back unchanged, and sends a few
+requests that must be refused. It never saves settings, restarts or flashes anything, and
+it never claims or hands out control: on a Timer that a client holds control of, it checks
+that its own writes are refused and skips the checks that need to write.
 
 Exit status: 0 if every Timer passed. GPL-3.0-or-later.
 """
@@ -37,8 +39,9 @@ SEAT_STATUS = {"seat": int, "node": (str, None), "rate_hz": int, "rssi": OPT_INT
 STATUS = {
     "type": "status", "uptime_s": int, "time_us": int, "temp_c": (*NUM, None), "timer_temp_c": (*NUM, None), "dropped": int,
     "clock_err_us": (*NUM, None), "clock_synced": bool, "clock_source": str, "drift_ppm": (*NUM, None), "node_connected": bool,
-    "link": LINK, "seats": [SEAT_STATUS], "clients": int,
+    "link": LINK, "seats": [SEAT_STATUS], "clients": int, "config_rev": int, "control": ({"id": int, "name": str}, None),
 }
+CONTROL = {"holder": OPT_INT, "claims": [{"id": int, "name": str, "holds": bool, "connected": bool}]}
 CROSSING = {"type": "crossing", "seq": int, "seat": int, "t_enter": int, "t_exit": int, "t_mid": int, "peak": int, "snr": int, "flags": [str]}
 ERROR = {"error": str}
 NET = ({"mode": "dhcp"}, {"mode": "static", "address": str, "prefix": int, "gateway?": str, "dns?": str})
@@ -87,8 +90,9 @@ class Timer:
         self.base = base.rstrip("/") + "/oft/v1"
         self.results = []
 
-    def call(self, path, method="GET", body=None):
-        req = urllib.request.Request(self.base + path, method=method, data=None if body is None else json.dumps(body).encode(), headers={"Content-Type": "application/json"} if body is not None else {})
+    def call(self, path, method="GET", body=None, headers=None):
+        headers = {**({"Content-Type": "application/json"} if body is not None else {}), **(headers or {})}
+        req = urllib.request.Request(self.base + path, method=method, data=None if body is None else json.dumps(body).encode(), headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 code, raw = r.status, r.read()
@@ -103,20 +107,26 @@ class Timer:
         self.results.append((name, problem))
         print(f"  {'ok  ' if problem is None else 'FAIL'}  {name}" + (f"\n        {problem}" if problem else ""))
 
-    def expect(self, name, path, code, shape, method="GET", body=None):
-        got, reply = self.call(path, method, body)
+    def expect(self, name, path, code, shape, method="GET", body=None, headers=None):
+        got, reply = self.call(path, method, body, headers)
         self.check(name, f"status {got}, expected {code}: {json.dumps(reply)[:100]}" if got != code else mismatch(reply, shape))
         return reply if got == code else None
 
     def run(self):
         info = self.expect("GET /info", "/info", 200, INFO)
         caps = (info or {}).get("capabilities", {})
-        self.expect("GET /status", "/status", 200, STATUS)
+        status = self.expect("GET /status", "/status", 200, STATUS) or {}
+        held = status.get("control") is not None
         self.expect("GET /time", "/time", 200, {"time_us": int, "boot_id": str})
         self.expect("GET /crossings", "/crossings?since=0", 200, {"boot_id": str, "crossings": [CROSSING]})
         config = self.expect("GET /config", "/config", 200, CONFIG)
-        if config:
+        if config and held:
+            self.expect("PUT /config without the holder's key is refused", "/config", 423, ERROR, "PUT", config)
+            print(f"        ({status['control']['name']} holds control: the checks that write are skipped)")
+        elif config:
             self.expect("PUT /config, unchanged", "/config", 200, CONFIG, "PUT", config)
+            rev = (self.call("/status")[1] or {}).get("config_rev")
+            self.check("config_rev moves with a config write", None if rev != status.get("config_rev") else f"still {rev}")
             again = self.call("/config")[1]
             self.check("the config reads back as written", None if again == config else f"wrote {json.dumps(config)[:70]}, read {json.dumps(again)[:70]}")
             bad = {**config, "seats": [{"seat": 9, "freq_mhz": 5800, "enabled": True}]}
@@ -133,6 +143,17 @@ class Timer:
         pins = "pins" in caps
         pins_state = {"saved": PINS, "using": PINS, "defaults": PINS, "choices": {"tx": [int], "rx": [int], "out": [int]}, "restart_needed": bool}
         self.expect("GET /pins" + ("" if pins else " (not announced)"), "/pins", 200 if pins else 404, pins_state if pins else (ERROR, str, None))
+        control = "control" in caps
+        self.expect("GET /control" + ("" if control else " (not announced)"), "/control", 200 if control else 404, CONTROL if control else (ERROR, str, None))
+        if control:
+            # Choosing the writer is for the Timer's own page, which a browser marks with
+            # an Origin naming the Timer. The last two checks send that header themselves
+            # to reach the refusals behind it; neither changes anything.
+            own_page = {"Origin": self.base.rsplit("/oft/v1", 1)[0]}
+            self.expect("POST /control from another client is refused", "/control", 403, ERROR, "POST", {"grant": 4000000000})
+            self.expect("POST /control from a page served elsewhere is refused", "/control", 403, ERROR, "POST", {"grant": 4000000000}, {"Origin": "http://elsewhere.invalid"})
+            self.expect("POST /control without grant is refused", "/control", 400, (ERROR, str, None), "POST", {}, own_page)
+            self.expect("POST /control to a claim that does not exist is refused", "/control", 404, ERROR, "POST", {"grant": 4000000000}, own_page)
         return info
 
 

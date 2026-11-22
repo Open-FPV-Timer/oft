@@ -191,6 +191,16 @@ pub struct StatusJson {
     pub link: LinkJson,
     pub seats: Vec<SeatStatus>,
     pub clients: usize,
+    /// Changes whenever the config or its saved state does.
+    pub config_rev: u32,
+    /// The claim that holds control (spec §6.6).
+    pub control: Option<HolderJson>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct HolderJson {
+    pub id: u32,
+    pub name: String,
 }
 
 /// Client → Timer on the WebSocket.

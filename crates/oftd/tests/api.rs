@@ -361,6 +361,7 @@ async fn websocket_hello_sub_and_live_crossings() {
                 assert_eq!(v["dt_us"], 10_000, "decimated dt");
             }
             "status" => statuses += 1,
+            "control" => assert!(v["holder"].is_null()),
             other => panic!("unexpected {other}"),
         }
     }
@@ -391,6 +392,7 @@ async fn websocket_rejects_bad_subscriptions_without_dropping() {
     let s = start(0.0).await;
     let (mut ws, _) = tokio_tungstenite::connect_async(&s.ws_url).await.unwrap();
     let _hello = ws.next().await.unwrap().unwrap();
+    let _control = ws.next().await.unwrap().unwrap();
     ws.send(WsMsg::Text("not json".into())).await.unwrap();
     let v: Value = serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
     assert_eq!(v["type"], "error");
@@ -437,4 +439,151 @@ async fn the_timer_keeps_answering_when_its_node_goes_quiet() {
     tokio::time::sleep(Duration::from_millis(3500)).await;
     let status = tokio::time::timeout(Duration::from_secs(2), get(&format!("http://{addr}/oft/v1/status"))).await.expect("the Timer stopped answering");
     assert_eq!(status["node_connected"], false, "{status}");
+}
+
+// ---------------------------------------------------------------- control (spec §6.6)
+
+type Ws = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The next message of one type on a stream.
+async fn next_of(ws: &mut Ws, kind: &str) -> Value {
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(3), ws.next()).await.expect("a message in time").unwrap().unwrap();
+        if let WsMsg::Text(t) = m {
+            let v: Value = serde_json::from_str(&t).unwrap();
+            if v["type"] == kind {
+                return v;
+            }
+        }
+    }
+}
+
+/// A new stream and what it is told about control straight after `hello`.
+async fn open(s: &Server) -> (Ws, Value) {
+    let (mut ws, _) = tokio_tungstenite::connect_async(&s.ws_url).await.unwrap();
+    let first = next_of(&mut ws, "control").await;
+    assert!(first["claim"].is_null());
+    (ws, first)
+}
+
+async fn say(ws: &mut Ws, v: Value) {
+    ws.send(WsMsg::Text(v.to_string().into())).await.unwrap();
+}
+
+/// `POST /control` as the Timer's own page sends it (a browser adds `Origin`), or as any
+/// other client does.
+async fn grant(s: &Server, body: Value, own_page: bool) -> reqwest::Response {
+    let mut req = reqwest::Client::new().post(format!("{}/control", s.base)).json(&body);
+    if own_page {
+        req = req.header("Origin", s.base.trim_end_matches("/oft/v1"));
+    }
+    req.send().await.unwrap()
+}
+
+/// PUT the config back as it is, with a key or without; the status code.
+async fn write(s: &Server, key: Option<&str>) -> u16 {
+    let url = format!("{}/config", s.base);
+    let config = get(&url).await;
+    let mut req = reqwest::Client::new().put(&url).json(&config);
+    if let Some(k) = key {
+        req = req.header("OFT-Control", k);
+    }
+    req.send().await.unwrap().status().as_u16()
+}
+
+#[tokio::test]
+async fn one_claim_holds_control_and_others_are_refused() {
+    let s = start(0.0).await;
+    assert_eq!(write(&s, None).await, 200, "with no claims anyone may write");
+    assert!(get(&format!("{}/info", s.base)).await["capabilities"]["control"].is_object());
+
+    let (mut rh, _) = open(&s).await;
+    say(&mut rh, serde_json::json!({"type": "control", "claim": "RotorHazard"})).await;
+    let got = next_of(&mut rh, "control").await;
+    let key = got["key"].as_str().expect("the holder gets a key").to_string();
+    assert_eq!(got["holder"]["name"], "RotorHazard");
+    assert_eq!(got["claim"], got["holder"]["id"]);
+
+    assert_eq!(write(&s, None).await, 423);
+    assert_eq!(write(&s, Some("00000000")).await, 423);
+    assert_eq!(write(&s, Some(&key)).await, 200);
+    assert_eq!(get(&format!("{}/status", s.base)).await["control"]["name"], "RotorHazard");
+    let refused: Value = reqwest::Client::new().post(format!("{}/config/save", s.base)).send().await.unwrap().json().await.unwrap();
+    assert_eq!(refused["error"], "controlled by RotorHazard");
+
+    // A second claim waits, and is told who holds control. It gets no key.
+    let (mut page, standing) = open(&s).await;
+    assert_eq!(standing["holder"]["name"], "RotorHazard", "a new stream hears the standing state");
+    say(&mut page, serde_json::json!({"type": "control", "claim": "Timer page"})).await;
+    let waiting = next_of(&mut page, "control").await;
+    assert!(waiting["claim"].is_u64() && waiting.get("key").is_none());
+    assert_eq!(waiting["holder"]["name"], "RotorHazard");
+    next_of(&mut rh, "control").await;
+
+    // The page hands control to the waiting claim; the old holder hears it and is refused.
+    let list = get(&format!("{}/control", s.base)).await;
+    assert_eq!(list["claims"].as_array().unwrap().len(), 2);
+    assert_eq!(list["claims"][0]["holds"], true);
+    // Only the Timer's own page may: no other client can take control for itself.
+    let refused = grant(&s, serde_json::json!({"grant": waiting["claim"]}), false).await;
+    assert_eq!(refused.status(), 403);
+    assert_eq!(reqwest::Client::new().post(format!("{}/control", s.base)).header("Origin", "http://somewhere.else:5000").json(&serde_json::json!({"grant": waiting["claim"]})).send().await.unwrap().status(), 403);
+    assert_eq!(get(&format!("{}/control", s.base)).await["claims"][0]["holds"], true);
+    let granted: Value = grant(&s, serde_json::json!({"grant": waiting["claim"]}), true).await.json().await.unwrap();
+    assert_eq!(granted["holder"], waiting["claim"]);
+    let page_key = next_of(&mut page, "control").await["key"].as_str().unwrap().to_string();
+    assert!(next_of(&mut rh, "control").await.get("key").is_none());
+    assert_eq!(write(&s, Some(&key)).await, 423);
+    assert_eq!(write(&s, Some(&page_key)).await, 200);
+    assert_eq!(grant(&s, serde_json::json!({"grant": 9999}), true).await.status(), 404);
+    assert_eq!(grant(&s, serde_json::json!({}), true).await.status(), 400);
+
+    // The page lets go: control goes back to the claim that has stood longest.
+    say(&mut page, serde_json::json!({"type": "control", "release": true})).await;
+    assert_eq!(next_of(&mut rh, "control").await["key"], key.as_str());
+    assert_eq!(write(&s, Some(&key)).await, 200);
+    assert!(next_of(&mut page, "control").await["claim"].is_null());
+
+    // A claim cannot take control over by itself, whatever it says.
+    say(&mut page, serde_json::json!({"type": "control", "claim": "Timer page", "takeover": true})).await;
+    assert!(next_of(&mut page, "control").await.get("key").is_none());
+    assert_eq!(write(&s, Some(&key)).await, 200);
+    // Freeing control for everyone.
+    let freed: Value = grant(&s, serde_json::json!({"grant": null}), true).await.json().await.unwrap();
+    assert!(freed["holder"].is_null());
+    assert_eq!(write(&s, None).await, 200);
+}
+
+#[tokio::test]
+async fn a_holder_whose_stream_drops_comes_back_with_its_key() {
+    let s = start(0.0).await;
+    let (mut rh, _) = open(&s).await;
+    say(&mut rh, serde_json::json!({"type": "control", "claim": "RotorHazard"})).await;
+    let first = next_of(&mut rh, "control").await;
+    let key = first["key"].as_str().unwrap().to_string();
+    let (mut page, _) = open(&s).await;
+    say(&mut page, serde_json::json!({"type": "control", "claim": "Timer page"})).await;
+    next_of(&mut page, "control").await;
+
+    drop(rh);
+    let away = next_of(&mut page, "control").await;
+    assert_eq!(away["holder"]["name"], "RotorHazard", "control is not passed on at once");
+    assert_eq!(get(&format!("{}/control", s.base)).await["claims"][0]["connected"], false);
+    assert_eq!(write(&s, Some(&key)).await, 200, "the holder's writes work while its stream is away");
+
+    let (mut rh, _) = open(&s).await;
+    say(&mut rh, serde_json::json!({"type": "control", "claim": "RotorHazard", "key": key})).await;
+    let back = next_of(&mut rh, "control").await;
+    assert_eq!(back["claim"], first["claim"]);
+    assert_eq!(back["key"], key.as_str());
+    assert_eq!(get(&format!("{}/control", s.base)).await["claims"][0]["connected"], true);
+}
+
+#[tokio::test]
+async fn config_rev_moves_with_every_config_write() {
+    let s = start(0.0).await;
+    let rev = |v: Value| v["config_rev"].as_u64().unwrap();
+    let before = rev(get(&format!("{}/status", s.base)).await);
+    assert_eq!(write(&s, None).await, 200);
+    assert!(rev(get(&format!("{}/status", s.base)).await) > before);
 }

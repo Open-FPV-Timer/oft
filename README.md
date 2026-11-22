@@ -75,6 +75,20 @@ two GPIOs, the same works with `--esp-en-gpio <n> --esp-boot-gpio <n>`. The prot
 The first time it replaces firmware that is not an OFT Node's, it saves what was on the chip
 as `~/.config/oftd/node-backup-<hash>.bin`.
 
+## Control: one writer at a time
+
+Any number of clients can watch a Timer; one at a time may change it (spec §6.6). A client
+claims control on its stream, and while a claim holds control every write without the
+holder's key is refused with 423. The logic is `oft_core::control`, shared by `oftd` and
+the RP2350 firmware. The Timer's page shows who holds control (Setup, "Control"), is
+read-only while another client does, and can hand control to any client that has claimed
+it. With no claims, anyone may write: `curl -X PUT .../config` still works on a bench.
+
+This is a technical control, not security. It keeps well-behaved clients from undoing each
+other's settings. Everything is plain HTTP, so someone on the same network who means harm
+can read the holder's key off the wire and write with it, or pose as the Timer's page. The
+Timer is meant for the local race network only: keep it off networks strangers can join.
+
 ## Level units
 
 A Node says what its level numbers measure (`oft_nodelink::msg::Level`): tenths of a dB for

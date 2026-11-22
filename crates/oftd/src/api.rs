@@ -26,13 +26,89 @@ pub fn router(timer: Arc<Timer>) -> Router {
         .route("/time", get(time))
         .route("/crossings", get(crossings))
         .route("/samples", get(samples))
-        .route("/stream", get(stream));
+        .route("/stream", get(stream))
+        .route_layer(axum::middleware::from_fn_with_state(timer.clone(), write_guard))
+        // After the guard: choosing the writer needs no key, but is for the Timer's own page.
+        .route("/control", get(get_control).post(post_control));
     Router::new().nest(API_PREFIX, api).route("/", get(root)).with_state(timer)
 }
 
 /// The built-in diagnostics page (the same file every Timer host serves).
 async fn root() -> axum::response::Html<&'static str> {
     axum::response::Html(include_str!("../../../web/timer.html"))
+}
+
+/// While a claim holds control, a write must carry its key (spec §6.6).
+async fn write_guard(State(t): State<Arc<Timer>>, req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if req.method() != axum::http::Method::GET {
+        let key = req.headers().get("OFT-Control").and_then(|v| v.to_str().ok());
+        let mut control = t.control.lock().unwrap();
+        if control.expire(t.now_us()) {
+            let _ = t.events.send(Outgoing::Control);
+        }
+        if !control.allows(key) {
+            let who = control.holder().map(|h| h.name.as_str().to_string()).unwrap_or_default();
+            return (StatusCode::LOCKED, Json(json!({"error": format!("controlled by {who}")}))).into_response();
+        }
+    }
+    next.run(req).await
+}
+
+async fn get_control(State(t): State<Arc<Timer>>) -> Json<serde_json::Value> {
+    Json(t.control_json())
+}
+
+/// `{"grant": <claim id>}` or `{"grant": null}`. The field must be there: an empty body
+/// must not free control by accident.
+#[derive(Deserialize)]
+struct Grant {
+    #[serde(default, deserialize_with = "present")]
+    grant: Option<Option<u32>>,
+}
+
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<u32>>, D::Error> {
+    Option::<u32>::deserialize(d).map(Some)
+}
+
+/// Whether a request comes from a page this Timer served: a browser sends `Origin` with
+/// every POST, and for the Timer's own page it names the host the request went to. Pages
+/// from elsewhere cannot fake it, and other clients do not send it.
+fn from_own_page(h: &axum::http::HeaderMap) -> bool {
+    let get = |name| h.get(name).and_then(|v: &axum::http::HeaderValue| v.to_str().ok());
+    match (get("origin"), get("host")) {
+        (Some(origin), Some(host)) => oft_core::control::same_origin(origin, host),
+        _ => false,
+    }
+}
+
+/// Hand control to a standing claim, or to nobody. Needs no key: it is the way back in
+/// when the holder is the wrong one. Only for the Timer's own page, so that no other
+/// client can take control for itself.
+async fn post_control(State(t): State<Arc<Timer>>, headers: axum::http::HeaderMap, Json(g): Json<Grant>) -> Response {
+    if !from_own_page(&headers) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": oft_core::control::OWN_PAGE_ONLY}))).into_response();
+    }
+    let Some(grant) = g.grant else {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "expected grant: a claim id or null"}))).into_response();
+    };
+    if t.control.lock().unwrap().grant(grant).is_err() {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "no such claim"}))).into_response();
+    }
+    let _ = t.events.send(Outgoing::Control);
+    Json(t.control_json()).into_response()
+}
+
+/// Where control stands, for one stream: the holder, the stream's own claim, and the key
+/// if that claim is the holder.
+fn control_msg(t: &Timer, mine: Option<(u32, u32)>) -> String {
+    let c = t.control.lock().unwrap();
+    // Another stream may have taken the claim up since (it came back with the key).
+    let mine = mine.filter(|(id, owner)| c.get(*id).is_some_and(|x| x.owner == *owner)).map(|(id, _)| id);
+    let mut v = json!({ "type": "control", "holder": c.holder().map(|h| json!({ "id": h.id, "name": h.name.as_str() })), "claim": mine });
+    if let Some(h) = c.holder().filter(|h| Some(h.id) == mine) {
+        v["key"] = String::from_utf8_lossy(&h.key_text()).into_owned().into();
+    }
+    v.to_string()
 }
 
 async fn info(State(t): State<Arc<Timer>>) -> Json<serde_json::Value> {
@@ -156,12 +232,15 @@ async fn handle_ws(socket: WebSocket, t: Arc<Timer>) {
     let mut events = t.events.subscribe();
     let mut sub = Sub::default();
     let mut decim_count: [u32; 8] = [0; 8];
+    // This stream's control claim; it ends with the stream.
+    let mut claim: Option<(u32, u32)> = None;
 
     let hello = t.hello_json();
     if tx.send(WsMsg::Text(hello.to_string().into())).await.is_err() {
         t.clients.fetch_sub(1, Ordering::Relaxed);
         return;
     }
+    let _ = tx.send(WsMsg::Text(control_msg(&t, claim).into())).await;
 
     loop {
         tokio::select! {
@@ -184,6 +263,29 @@ async fn handle_ws(socket: WebSocket, t: Arc<Timer>) {
                                     Err(e) => {
                                         let _ = tx.send(WsMsg::Text(serde_json::json!({"type":"error","code":"bad_sub","msg":e.to_string()}).to_string().into())).await;
                                     }
+                                }
+                            }
+                            Ok(v) if v.get("type").and_then(|x| x.as_str()) == Some("control") => {
+                                // Every stream, this one included, hears the outcome as an event.
+                                if v.get("release").and_then(|x| x.as_bool()) == Some(true) {
+                                    if let Some(mine) = claim.take() {
+                                        t.control.lock().unwrap().leave(mine, false, t.now_us());
+                                    }
+                                    let _ = t.events.send(Outgoing::Control);
+                                } else if let Some(name) = v.get("claim").and_then(|x| x.as_str()) {
+                                    let key = v.get("key").and_then(|x| x.as_str());
+                                    let made = t.control.lock().unwrap().claim(claim, name, key, t.now_us() as u32);
+                                    match made {
+                                        Ok(mine) => {
+                                            claim = Some(mine);
+                                            let _ = t.events.send(Outgoing::Control);
+                                        }
+                                        Err(_) => {
+                                            let _ = tx.send(WsMsg::Text(json!({"type":"error","code":"control_full","msg":"this Timer has no room for another claim"}).to_string().into())).await;
+                                        }
+                                    }
+                                } else {
+                                    let _ = tx.send(WsMsg::Text(json!({"type":"error","code":"bad_control","msg":"expected \"claim\" or \"release\""}).to_string().into())).await;
                                 }
                             }
                             Ok(v) if v.get("type").and_then(|x| x.as_str()) == Some("ping") => {
@@ -232,6 +334,7 @@ async fn handle_ws(socket: WebSocket, t: Arc<Timer>) {
                         _ => None,
                     },
                     Outgoing::Status(st) if sub.status => Some(serde_json::to_string(st).unwrap()),
+                    Outgoing::Control => Some(control_msg(&t, claim)),
                     _ => None,
                 };
                 if let Some(text) = text {
@@ -239,6 +342,11 @@ async fn handle_ws(socket: WebSocket, t: Arc<Timer>) {
                 }
             }
         }
+    }
+    // A holder keeps control for a while after its stream drops, to come back to.
+    if let Some(mine) = claim {
+        t.control.lock().unwrap().leave(mine, true, t.now_us());
+        let _ = t.events.send(Outgoing::Control);
     }
     t.clients.fetch_sub(1, Ordering::Relaxed);
 }

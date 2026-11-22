@@ -68,7 +68,12 @@ pub enum Outgoing {
     Crossing(CrossingJson),
     Samples(SamplesJson),
     Status(StatusJson),
+    /// A claim or the holder of control changed (spec §6.6).
+    Control,
 }
+
+/// Standing control claims a Timer keeps.
+pub const MAX_CLAIMS: usize = 16;
 
 struct SeatHistory {
     /// (timer time µs, power 0.1 dB), oldest first.
@@ -105,6 +110,10 @@ pub struct Timer {
     pub node_fw: Mutex<crate::nodefw::NodeFw>,
     pub events: broadcast::Sender<Outgoing>,
     pub clients: AtomicUsize,
+    /// Who may write (spec §6.6).
+    pub control: Mutex<oft_core::control::Control<MAX_CLAIMS>>,
+    /// `config_rev` in `/status`.
+    config_rev: AtomicU32,
 }
 
 fn detect_config(c: &Config) -> DetectConfig {
@@ -153,7 +162,6 @@ impl Timer {
         host.set_plan(plan_for(&config));
         Arc::new(Self {
             cfg,
-            boot_id,
             started: Instant::now(),
             inner: Mutex::new(Inner {
                 host,
@@ -174,6 +182,9 @@ impl Timer {
             node_fw: Mutex::new(Default::default()),
             events,
             clients: AtomicUsize::new(0),
+            control: Mutex::new(oft_core::control::Control::new(u32::from_str_radix(&boot_id, 16).unwrap_or(1))),
+            config_rev: AtomicU32::new(0),
+            boot_id,
         })
     }
 
@@ -183,6 +194,7 @@ impl Timer {
         let path = self.cfg.settings.as_deref().ok_or("this Timer does not keep settings")?;
         crate::settings::save(path, config.as_ref()).map_err(|e| format!("could not write {}: {e}", path.display()))?;
         self.inner.lock().unwrap().saved = config;
+        self.config_rev.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -221,6 +233,7 @@ impl Timer {
             inner.config = config;
             replan
         };
+        self.config_rev.fetch_add(1, Ordering::Relaxed);
         if replan {
             self.send_to_node(&Message::Plan(plan));
         }
@@ -291,7 +304,24 @@ impl Timer {
             },
             seats,
             clients: self.clients.load(Ordering::Relaxed),
+            config_rev: self.config_rev.load(Ordering::Relaxed),
+            control: self.holder(),
         }
+    }
+
+    /// The claim that holds control.
+    pub fn holder(&self) -> Option<protocol::HolderJson> {
+        self.control.lock().unwrap().holder().map(|c| protocol::HolderJson { id: c.id, name: c.name.as_str().into() })
+    }
+
+    /// The reply of `/control`: the standing claims, oldest first.
+    pub fn control_json(&self) -> serde_json::Value {
+        let c = self.control.lock().unwrap();
+        let holder = c.holder().map(|h| h.id);
+        serde_json::json!({
+            "holder": holder,
+            "claims": c.claims().map(|x| serde_json::json!({ "id": x.id, "name": x.name.as_str(), "holds": Some(x.id) == holder, "connected": x.away_until.is_none() })).collect::<Vec<_>>(),
+        })
     }
 
     pub fn info(&self) -> serde_json::Value {
@@ -331,6 +361,7 @@ impl Timer {
                 "samples.history": { "full_rate_s": HISTORY_S, "reduced_rate_s": 0, "reduced_hz": 0 },
                 "config": { "persist": self.cfg.settings.is_some(), "threshold_modes": ["auto", "manual"], "min_lap_ms": true, "seat_thresholds": true, "exit_hold_ms": true, "pass_window_ms": true },
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
+                "control": {},
             },
         });
         match self.cfg.node_fw {
@@ -450,6 +481,9 @@ impl Timer {
                 self.send_to_node(&Message::Plan(plan));
             }
             if now >= next_status {
+                if self.control.lock().unwrap().expire(self.now_us()) {
+                    let _ = self.events.send(Outgoing::Control);
+                }
                 let _ = self.events.send(Outgoing::Status(self.status()));
                 next_status = now + self.cfg.status_period;
             }

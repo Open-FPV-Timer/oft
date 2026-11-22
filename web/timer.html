@@ -85,6 +85,21 @@
   .state { margin-top: 6px; }
   .state .pill { white-space: normal; border-radius: 8px; padding: 4px 10px; }
 
+  /* ---- control: who may change the Timer */
+  .banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); border-radius: 10px; padding: 9px 14px; margin: 12px 0; font-weight: 600; }
+  .banner .spacer { flex: 1; }
+  .banner a { color: inherit; }
+  .w[inert] { opacity: 0.45; }
+
+  /* ---- dashboard */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  .card .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 0.85rem; min-height: 1.6em; }
+  .card .freq { font-size: 1.5rem; font-weight: 700; line-height: 1.3; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+  .card .facts { font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+  .flash { animation: flash 2.5s ease-out; border-radius: 4px; }
+  @keyframes flash { from { background: var(--warn-bg); color: var(--warn); } }
+
   /* ---- sticky action bar on Setup */
   .actions { position: sticky; bottom: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; margin: 12px 0; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; box-shadow: var(--shadow); }
   .actions .spacer { flex: 1; }
@@ -111,6 +126,7 @@
     .chips { margin-left: 0; width: 100%; }
     nav a { padding: 8px 10px; }
     canvas { height: 200px; }
+    .cards { grid-template-columns: 1fr; }
     main { padding: 4px 10px 80px; }
     section { padding: 12px; }
     th, td { padding: 5px 6px; }
@@ -132,6 +148,7 @@
   </div>
   <nav id="nav">
     <a href="#live" data-page="live">Live</a>
+    <a href="#dashboard" data-page="dashboard">Dashboard</a>
     <a href="#setup" data-page="setup">Setup<span class="dot" id="nav-dirty" hidden title="Changes not applied"></span></a>
     <a href="#network" data-page="network" id="nav-network" hidden>Network</a>
     <a href="#firmware" data-page="firmware">Firmware</a>
@@ -141,6 +158,11 @@
 </div></div>
 
 <main>
+<div class="banner" id="ro-banner" hidden>
+  <span id="ro-text"></span><span class="spacer"></span>
+  <a href="#setup" id="ro-link">Who has control</a>
+  <button class="btn sm" id="ro-take">Take control…</button>
+</div>
 <!-- ================================================================ Live -->
 <div class="page" id="p-live">
 <section>
@@ -179,6 +201,25 @@
 </section>
 </div>
 
+<!-- ================================================================ Dashboard -->
+<div class="page" id="p-dashboard" hidden>
+<section>
+  <h3>Seats <button type="button" class="tip" data-tip="What the Timer is running now, whoever set it: this page, race software or another browser. Nothing here can be changed; use Setup for that. A value is highlighted for a moment when it changes." aria-label="Help">?</button></h3>
+  <div class="cards" id="dash-seats"><span class="small">waiting for the Timer</span></div>
+</section>
+<section>
+  <h3>Detection</h3>
+  <dl class="facts">
+    <dt>Shared levels</dt><dd id="dash-levels">-</dd>
+    <dt>Minimum lap</dt><dd id="dash-minlap">-</dd>
+    <dt id="dash-hold-t">Exit hold-off</dt><dd id="dash-hold">-</dd>
+    <dt id="dash-window-t">Pass window</dt><dd id="dash-window">-</dd>
+    <dt>Power-on settings</dt><dd id="dash-saved">-</dd>
+    <dt>Control</dt><dd id="dash-control">-</dd>
+  </dl>
+</section>
+</div>
+
 <!-- ================================================================ Setup -->
 <div class="page" id="p-setup" hidden>
 <section>
@@ -214,15 +255,26 @@
   </div>
 </section>
 
+<section id="ctl" hidden>
+  <h3>Control <button type="button" class="tip" data-tip="Only one client at a time may change the Timer, so two cannot undo each other's settings. The first client to claim control gets it; later ones wait and can still watch. If the wrong one has it, give control to the right one here. Only this page can do that. A client that loses its connection keeps control for 10 seconds, to come back to." aria-label="Help">?</button></h3>
+  <div id="ctl-state" class="small"></div>
+  <table style="margin-top:6px"><tbody id="ctl-rows"></tbody></table>
+  <div class="row">
+    <button class="btn ghost" id="ctl-take">Take control for this page…</button>
+    <button class="btn ghost" id="ctl-release">Give up this page's control</button>
+    <button class="btn ghost" id="ctl-free">Let any client change the Timer…</button>
+  </div>
+</section>
+
 <div class="actions">
   <span id="setup-state" class="pill">no changes</span>
   <span id="persist-note" class="small"></span>
   <span class="spacer"></span>
   <button class="btn ghost" id="reload">Discard changes</button>
-  <button class="btn" id="apply">Apply</button>
+  <button class="btn w" id="apply">Apply</button>
   <span id="persist" hidden style="display:contents">
-    <button class="btn ghost" id="save-default">Save as power-on settings</button>
-    <button class="btn ghost" id="forget-default">Forget saved</button>
+    <button class="btn ghost w" id="save-default">Save as power-on settings</button>
+    <button class="btn ghost w" id="forget-default">Forget saved</button>
     <button type="button" class="tip" data-tip="Apply changes the running Timer and lasts until it restarts. Save as power-on settings keeps what is running now, so the Timer starts with it. Saving pauses timing for a moment." aria-label="Help">?</button>
   </span>
 </div>
@@ -256,8 +308,8 @@
     <label class="field net-static"><span>Gateway <button type="button" class="tip" data-tip="Optional. Only needed to reach the Timer from another network." aria-label="Help">?</button></span><input type="text" id="net-gw" placeholder="192.168.1.1" size="15"></label>
   </div>
   <div class="row">
-    <button class="btn" id="net-save">Save network settings</button>
-    <button class="btn ghost" id="restart">Restart the Timer</button>
+    <button class="btn w" id="net-save">Save network settings</button>
+    <button class="btn ghost w" id="restart">Restart the Timer</button>
   </div>
 </section>
 </div>
@@ -274,14 +326,14 @@
     <div id="fwup-form">
       <div class="row">
         <label class="field"><span>Update file (.bin)</span><input type="file" id="fwup-file" accept=".bin"></label>
-        <button class="btn" id="fwup-go" disabled style="align-self:flex-end">Update the Timer…</button>
+        <button class="btn w" id="fwup-go" disabled style="align-self:flex-end">Update the Timer…</button>
       </div>
       <progress id="fwup-bar" max="100" value="0" hidden></progress>
     </div>
     <div id="fwup-state" class="state"></div>
   </div>
   <div class="row" id="fw-actions" hidden>
-    <button class="btn ghost" id="bootsel">Restart into USB update mode…</button>
+    <button class="btn ghost w" id="bootsel">Restart into USB update mode…</button>
     <button type="button" class="tip" data-tip="For installing a .uf2 over USB-C. The Timer stops timing and appears as a drive named RP2350. Power-cycle it to go back without installing." aria-label="Help">?</button>
   </div>
 </section>
@@ -293,7 +345,7 @@
   </dl>
   <div class="row">
     <label class="field"><span>Firmware file <button type="button" class="tip" data-tip="The Node's firmware file (.bin). For an ESP32 Node this is firmware.bin: its bootloader and partition table are not updated from this page; they only change with a new flash layout (see the Timer firmware's README)." aria-label="Help">?</button></span><input type="file" id="nodeup-file" accept=".bin"></label>
-    <button class="btn" id="nodeup-go" disabled style="align-self:flex-end">Update the Node…</button>
+    <button class="btn w" id="nodeup-go" disabled style="align-self:flex-end">Update the Node…</button>
   </div>
   <progress id="nodeup-bar" max="100" value="0" hidden></progress>
   <div id="nodeup-state" class="state"></div>
@@ -324,7 +376,7 @@
 </section>
 
 <section id="wt-card" hidden>
-  <h3>Node wiring test <button type="button" class="tip" data-tip="Checks the reset (EN) and boot (BOOT) wires the Timer uses to restart and update the Node. It restarts the Node three times, so timing stops while it runs." aria-label="Help">?</button><span class="spacer"></span><button class="btn ghost sm" id="wiretest">Run the test…</button></h3>
+  <h3>Node wiring test <button type="button" class="tip" data-tip="Checks the reset (EN) and boot (BOOT) wires the Timer uses to restart and update the Node. It restarts the Node three times, so timing stops while it runs." aria-label="Help">?</button><span class="spacer"></span><button class="btn ghost sm w" id="wiretest">Run the test…</button></h3>
   <div id="wt" hidden>
     <table>
       <tbody>
@@ -354,9 +406,9 @@
     <label class="field"><span>Node boot (BOOT)</span><select id="pin-boot"></select></label>
   </div>
   <div class="row">
-    <button class="btn" id="pins-save">Save pins</button>
+    <button class="btn w" id="pins-save">Save pins</button>
     <button class="btn ghost" id="pins-default">Back to the defaults</button>
-    <button class="btn ghost" id="pins-restart">Restart the Timer</button>
+    <button class="btn ghost w" id="pins-restart">Restart the Timer</button>
   </div>
 </section>
 </div>
@@ -392,7 +444,12 @@
   const raw = (text) => Math.round(Number(text) / unit.scale);       // back to the Timer's integer
   const db = (v) => (v == null ? "-" : num(v) + " " + unit.name);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Who may change the Timer (spec 6.6), as the stream last said: the claim that holds
+  // control, this page's own claim, and the key its writes carry while it is the holder.
+  let control = { holder: null, claim: null, key: null };
+  const keyed = (headers) => (control.key ? { ...headers, "OFT-Control": control.key } : headers);
   const json = async (path, opts) => {
+    if (opts && opts.method) opts = { ...opts, headers: keyed(opts.headers || {}) };
     const r = await fetch(API + path, opts);
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
@@ -455,7 +512,7 @@
   window.addEventListener("scroll", hideTip, true);
 
   // ---------------------------------------------------------------- pages
-  const PAGES = ["live", "setup", "network", "firmware", "diagnostics", "advanced"];
+  const PAGES = ["live", "dashboard", "setup", "network", "firmware", "diagnostics", "advanced"];
   function showPage() {
     let p = location.hash.slice(1);
     if (!PAGES.includes(p) || (p === "network" && $("nav-network").hidden) || (p === "advanced" && $("nav-advanced").hidden)) p = "live";
@@ -463,6 +520,7 @@
     for (const a of $("nav").children) a.classList.toggle("on", a.dataset.page === p);
     hideTip();
     window.scrollTo(0, 0);
+    if (p === "dashboard") showDash();
   }
   window.addEventListener("hashchange", showPage);
 
@@ -479,6 +537,9 @@
   let frozenNow = null;
   let rateHist = [];        // [{t, gap, crc, uart, over}] for the 10 s rates
   let bootId = null, lastSeq = 0;
+  let cfgRev = null;        // status.config_rev when the config was last read
+  let baseText = "";        // the config the Setup draft was made from, as JSON
+  let stale = false;        // another client changed the config under unapplied edits
 
   const caps = () => (info && info.capabilities) || {};
   const timerNow = () => (frozenNow != null ? frozenNow : clockOff == null ? null : clockOff + performance.now() * 1000);
@@ -511,9 +572,11 @@
     if ($("nav-network").hidden !== !c.network) { $("nav-network").hidden = !c.network; showPage(); }
     $("net-name").textContent = `http://${String(info.id).toLowerCase()}.local:${location.port || 80}/ where .local names resolve`;
     if (persist) loadSaveState(); else { saveState = null; setupState(); }
+    showControl();
     if (c.network && !netDirty) loadNetwork();
     if ($("nav-advanced").hidden !== !c.pins) { $("nav-advanced").hidden = !c.pins; showPage(); }
     if (c.pins && !pinsDirty) loadPins();
+    showDash();
     if (bootId && bootId !== info.boot_id) { note(persist ? "The Timer restarted." : "The Timer restarted; settings are back to their defaults."); resetData(); setDirty(false); await loadConfig(); }
     bootId = info.boot_id;
   }
@@ -524,12 +587,14 @@
   function setDirty(v) { dirty = v; $("nav-dirty").hidden = !v; $("reload").disabled = !v; setupState(); }
   function setupState() {
     const p = $("setup-state"), s = saveState;
-    if (dirty) pill(p, "changes not applied", "warn");
+    if (!canWrite()) pill(p, `read-only: ${control.holder.name} holds control`, "warn");
+    else if (dirty) pill(p, stale ? "changes not applied; the settings changed elsewhere meanwhile" : "changes not applied", "warn");
     else if (!s) pill(p, "applied", "ok");
     else if (s.current_is_saved) pill(p, "applied and saved", "ok");
     else pill(p, s.saved ? "applied, differs from the saved settings" : "applied, not saved", "");
     $("persist-note").textContent = dirty || !s ? (s ? "" : "Not kept across a restart.") : s.current_is_saved ? "" : s.saved ? "A restart goes back to the saved settings." : "A restart goes back to the defaults.";
     $("forget-default").disabled = !(s && s.saved);
+    showDash();
   }
 
   const draftSeat = (n) => draft && draft.seats.find((s) => s.seat === n);
@@ -539,6 +604,8 @@
     if (!config) return;
     const seats = (config.seats || []).filter((s) => s.enabled).sort((a, b) => a.seat - b.seat);
     draft = JSON.parse(JSON.stringify({ ...config, seats }));
+    baseText = JSON.stringify(config);
+    stale = false;
     // the chart's seat picker
     const sel = $("seat");
     sel.innerHTML = "";
@@ -617,7 +684,7 @@
     return null;
   }
 
-  async function loadConfig() { config = await json("/config"); if (!dirty) showConfig(); }
+  async function loadConfig() { config = await json("/config"); if (!dirty) showConfig(); showDash(); }
 
   $("nseats").addEventListener("change", () => {
     const want = Number($("nseats").value) || 1;
@@ -663,6 +730,7 @@
     if (draft.exit_hold_ms != null && !(draft.exit_hold_ms >= 0 && draft.exit_hold_ms <= 1000)) return fail("Exit hold-off must be 0 to 1000 ms.");
     if (!(draft.min_lap_ms >= 0)) return fail("Fill in the minimum lap.");
     if (draft.pass_window_ms != null && !(draft.pass_window_ms >= 0 && draft.pass_window_ms <= 10000)) return fail("Pass window must be 0 to 10000 ms.");
+    if (stale && !(await ask({ title: "Apply over the other changes?", body: "Another client changed the Timer's settings after you started editing. Applying replaces them with what is on this page.", ok: "Apply mine" }))) return;
     try {
       const c = await json("/config"), before = (c.seats || []).filter((s) => s.enabled).length;
       const own = caps().config && caps().config.seat_thresholds;
@@ -677,6 +745,7 @@
       config = await json("/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
       setDirty(false);
       showConfig();
+      showDash();
       const n = c.seats.length;
       done(n !== before ? `Applied. The Timer now has ${n} seat${n > 1 ? "s" : ""}.` : "Applied.");
       if (!$("persist").hidden) loadSaveState();
@@ -798,6 +867,8 @@
       ? `Now ${db(s.rssi)} · floor ${db(s.floor)} · ${db(s.rssi - s.floor)} above floor · enter ${db(s.enter)} · exit ${db(s.exit)}`
       : "No samples yet.";
     showRates();
+    showDash();
+    if (st.config_rev !== cfgRev) { const first = cfgRev == null; cfgRev = st.config_rev; if (!first) configChanged(); }
 
     const l = st.link || {};
     const gap = l.gap_samples != null ? l.gap_samples : st.dropped;
@@ -826,6 +897,160 @@
     else pill($("h-loss"), alerts ? `losing samples (${lossPct.toFixed(1)}%)` : "link clean", alerts ? "bad" : "ok");
   }
 
+  // ---------------------------------------------------------------- dashboard
+  // Read-only: the settings the Timer is running, with each seat's live levels. The live
+  // values come with each status message, the settings when status.config_rev moves.
+  let dashKey = null;
+  const levelsText = (t) => (t.mode === "manual" ? `manual: enter ${db(t.enter)}, exit ${db(t.exit)}` : `auto: enter ${db(t.snr_enter)} above the noise floor, exit ${db(t.hysteresis)} below enter`);
+  // Set a value; a setting that changes after it was first shown is highlighted briefly.
+  function put(el, text, setting) {
+    if (el.textContent === text) return;
+    const first = el.textContent === "" || el.textContent === "-";
+    el.textContent = text;
+    if (setting && !first) { el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+  }
+  function showDash() {
+    if ($("p-dashboard").hidden || !config) return;
+    const seats = (config.seats || []).filter((s) => s.enabled).sort((a, b) => a.seat - b.seat);
+    const box = $("dash-seats"), key = seats.map((s) => s.seat).join();
+    if (key !== dashKey) {
+      dashKey = key;
+      const rows = [["sig", "Signal"], ["enter", "Enter level"], ["exit", "Exit level"], ["levels", "Levels"], ["rate", "Samples"]];
+      box.replaceChildren(...seats.map((s) => {
+        const d = document.createElement("div");
+        d.className = "card";
+        d.innerHTML = `<div class="head"><b>Seat ${s.seat}</b><span data-k="state"></span></div><div class="freq" data-k="freq"></div><dl class="facts">${rows.map(([k, n]) => `<dt>${n}</dt><dd data-k="${k}"></dd>`).join("")}</dl>`;
+        return d;
+      }));
+      if (!seats.length) box.innerHTML = '<span class="small">no seats</span>';
+    }
+    seats.forEach((s, i) => {
+      const el = (k) => box.children[i].querySelector(`[data-k=${k}]`);
+      const st = ((status && status.seats) || []).find((x) => x.seat === s.seat);
+      const r = RACEBAND.indexOf(s.freq_mhz), live = st && st.rate_hz > 0 && st.rssi != null;
+      put(el("freq"), (r < 0 ? "" : `R${r + 1} · `) + `${s.freq_mhz} MHz`, true);
+      put(el("levels"), s.threshold ? `own, ${levelsText(s.threshold)}` : `shared, ${config.threshold.mode === "manual" ? "manual" : "auto"}`, true);
+      put(el("sig"), live ? db(st.rssi) + (st.floor != null ? `, ${db(Math.abs(st.rssi - st.floor))} ${st.rssi < st.floor ? "below" : "above"} floor` : "") : "-");
+      put(el("enter"), live ? db(st.enter) : "-");
+      put(el("exit"), live ? db(st.exit) : "-");
+      put(el("rate"), st && st.rate_hz ? `${st.rate_hz} per second` : "none");
+      const state = el("state"), text = !live ? "no samples" : st.crossing ? "crossing" : "";
+      state.textContent = text;
+      state.className = text ? "pill " + (live ? "ok" : "warn") : "";
+    });
+    put($("dash-levels"), levelsText(config.threshold), true);
+    put($("dash-minlap"), `${config.min_lap_ms} ms`, true);
+    $("dash-hold-t").hidden = $("dash-hold").hidden = config.exit_hold_ms == null;
+    if (config.exit_hold_ms != null) put($("dash-hold"), `${config.exit_hold_ms} ms`, true);
+    $("dash-window-t").hidden = $("dash-window").hidden = config.pass_window_ms == null;
+    if (config.pass_window_ms != null) put($("dash-window"), config.pass_window_ms ? `${config.pass_window_ms} ms` : "off", true);
+    const sv = saveState;
+    put($("dash-saved"), !sv ? "not kept by this Timer: a restart goes back to the defaults" : sv.current_is_saved ? "the same as these" : sv.saved ? "different: a restart goes back to the saved ones" : "none saved: a restart goes back to the defaults", true);
+  }
+
+  // The config or what is saved changed on the Timer (status.config_rev moved): by this
+  // page, or by another client. Setup follows unless it has edits that are not applied.
+  async function configChanged() {
+    try {
+      config = await json("/config");
+      if (!dirty) showConfig();
+      else if (!stale && JSON.stringify(config) !== baseText) {
+        stale = true;
+        note("Another client changed the Timer's settings while you were editing. Your edits are kept; Discard changes shows the new settings.");
+      }
+      if (!$("persist").hidden) await loadSaveState(); else setupState();
+    } catch { /* the top bar already shows a Timer that stopped answering */ }
+  }
+
+  // ---------------------------------------------------------------- control
+  // A client that means to change the Timer claims control on its stream; while a claim
+  // holds control only its writes are accepted. This page claims only when asked to, and
+  // otherwise shows who holds control and lets the person here hand it to any claim.
+  let claims = [];          // GET /control: the standing claims, oldest first
+  let resuming = false;     // reconnected and asked for this page's old claim back
+  let taking = false;       // asked to take control: grant this page's claim once it has one
+  const canWrite = () => !control.holder || !!control.key;
+  const send = (m) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); };
+  function showControl() {
+    const h = control.holder, ro = !canWrite();
+    $("ctl").hidden = !caps().control;
+    $("ro-banner").hidden = !ro;
+    if (ro) $("ro-text").textContent = `${h.name} holds control of this Timer, so this page cannot change it.`;
+    for (const el of document.querySelectorAll(".w")) el.inert = ro;
+    $("ctl-state").textContent = control.key ? "This page holds control. No other client can change the Timer until you give it up or close this page."
+      : h ? `${h.name} holds control. No other client, this page included, can change the Timer.`
+      : claims.length ? "Nobody holds control, so any client may change the Timer." : "No client has claimed control, so any client may change the Timer.";
+    $("ctl-rows").replaceChildren(...claims.map((c) => {
+      const tr = document.createElement("tr"), cell = (...x) => { const td = document.createElement("td"); td.append(...x); tr.append(td); };
+      const state = document.createElement("span");
+      pill(state, !c.holds ? "waiting" : c.connected ? "holds control" : "holds control, connection lost", !c.holds ? "" : c.connected ? "ok" : "warn");
+      cell(c.name + (c.id === control.claim ? " (this page)" : ""));
+      cell(state);
+      const b = document.createElement("button");
+      b.className = "btn ghost sm"; b.textContent = "Give control"; b.hidden = c.holds;
+      b.onclick = () => grant(c);
+      cell(b);
+      return tr;
+    }));
+    $("ctl-take").hidden = !!control.key;
+    $("ctl-release").hidden = !control.key;
+    $("ctl-free").hidden = !h;
+    put($("dash-control"), h ? h.name + (control.key ? " (this page)" : "") : "any client may change the Timer", true);
+    setupState();
+  }
+  async function loadClaims() {
+    try { claims = (await json("/control")).claims || []; } catch { claims = []; /* a Timer without control */ }
+    showControl();
+  }
+  function onControl(m) {
+    const had = control.key;
+    control = { holder: m.holder || null, claim: m.claim == null ? null : m.claim, key: m.key || null };
+    if (taking && control.claim != null) {
+      // Only this page may move control (POST /control), so it hands it to its own claim.
+      taking = false;
+      if (!control.key) post({ grant: control.claim }).catch((e) => { send({ type: "control", release: true }); fail("Could not take control: " + e.message); });
+    } else if (resuming && control.claim != null) {
+      // The old claim is gone if this one came back without control: do not wait in line.
+      resuming = false;
+      if (!control.key) { send({ type: "control", release: true }); note("This page no longer holds control."); }
+    } else if (had && !control.key) {
+      note(control.holder ? `${control.holder.name} now holds control.` : "This page no longer holds control.");
+      // Control went elsewhere. Drop the claim, or this page would wait in line and get
+      // control back by itself when that client's stream ends.
+      if (control.claim != null) send({ type: "control", release: true });
+    }
+    showControl();
+    loadClaims();
+  }
+  // Hand control to a claim or to nobody. The Timer takes this from its own page only.
+  async function post(body) {
+    claims = (await json("/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).claims || [];
+    showControl();
+  }
+  async function grant(c) {
+    const h = control.holder;
+    if (!(await ask({ title: `Give control to ${c.name}?`, body: (h ? `${control.key ? "This page" : h.name} will no longer be able to change the Timer.` : "Other clients will no longer be able to change the Timer.") + " You can hand control on again from here.", ok: "Give control" }))) return;
+    try { await post({ grant: c.id }); }
+    catch (e) { fail("Could not give control: " + e.message); }
+  }
+  async function takeControl() {
+    const h = control.holder;
+    if (h && !(await ask({ title: `Take control from ${h.name}?`, body: `${h.name} cannot change the Timer while this page holds control. It gets control back when you give it up or close this page.`, ok: "Take control" }))) return;
+    if (!ws || ws.readyState !== 1) return fail("Not connected to the Timer.");
+    taking = true;
+    send({ type: "control", claim: "Timer page" });
+  }
+  $("ro-take").addEventListener("click", takeControl);
+  $("ctl-take").addEventListener("click", takeControl);
+  $("ctl-release").addEventListener("click", () => send({ type: "control", release: true }));
+  $("ctl-free").addEventListener("click", async () => {
+    if (!(await ask({ title: "Let any client change the Timer?", body: "Nobody will hold control until a client claims it again, so two clients can change each other's settings.", ok: "Let any client" }))) return;
+    try { await post({ grant: null }); }
+    catch (e) { fail("Could not free control: " + e.message); }
+  });
+  // Closing the page gives control back at once, not after the 10 s a dropped stream gets.
+  window.addEventListener("pagehide", () => { if (control.claim != null) send({ type: "control", release: true }); });
+
   // ---------------------------------------------------------------- crossings
   function addCrossing(c) {
     if (c.seq <= lastSeq) return;
@@ -853,6 +1078,8 @@
       retry = 500;
       conn("live", "ok");
       ws.send(JSON.stringify({ type: "sub", crossings: { since: lastSeq }, samples: { seats: "all", decimate: 5 }, status: true }));
+      // A page that held control when its stream dropped asks for that claim back.
+      if (control.key) { resuming = true; send({ type: "control", claim: "Timer page", key: control.key }); }
       loadInfo().then(loadConfig).catch((e) => fail("Could not read the Timer: " + e.message));
     };
     ws.onmessage = (e) => {
@@ -869,6 +1096,7 @@
         if (drop) tr.splice(0, drop);
       } else if (m.type === "crossing") addCrossing(m);
       else if (m.type === "status") { seen(m.time_us); showStatus(m); }
+      else if (m.type === "control") onControl(m);
       else if (m.type === "hello") { if (bootId && m.boot_id && m.boot_id !== bootId) loadInfo().catch(() => {}); }
     };
     ws.onclose = () => {
@@ -970,6 +1198,7 @@
     const x = new XMLHttpRequest();
     x.open("POST", API + "/fw/timer");
     x.setRequestHeader("Content-Type", "application/octet-stream");
+    if (control.key) x.setRequestHeader("OFT-Control", control.key);
     x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
     x.onload = () => {
       let body = {};
@@ -1088,7 +1317,7 @@
     nodeBusy = true; $("nodeup-go").disabled = true;
     nodeState("Sending the file to the Timer…");
     try {
-      const r = await fetch(`${API}/fw/node?offset=65536`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
+      const r = await fetch(`${API}/fw/node?offset=65536`, { method: "POST", headers: keyed({ "Content-Type": "application/octet-stream" }), body: file });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       showNodeFlash(body);

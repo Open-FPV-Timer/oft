@@ -2,6 +2,7 @@
 //!
 //! - [`clock`]: maps a Node's µs clock onto the Timer clock from SYNC edges or ping/pong.
 //! - [`detect`]: turns a stream of band-power samples into [`Crossing`]s (`edge_mid`).
+//! - [`control`]: which client may change the Timer (one writer at a time).
 //!
 //! Power values are integers in the Node's level unit, the same as on the Node link:
 //! **0.1 dB** for most Nodes, millivolts for one that says so (`oft_nodelink::msg::Level`).
@@ -14,6 +15,7 @@
 extern crate std;
 
 pub mod clock;
+pub mod control;
 pub mod detect;
 pub mod host;
 
