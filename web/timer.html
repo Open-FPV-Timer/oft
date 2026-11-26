@@ -370,6 +370,7 @@
   <h3>Device</h3>
   <dl class="facts">
     <dt>Timer</dt><dd id="d-timer">-</dd>
+    <dt id="d-nodes-t" hidden>Nodes <button type="button" class="tip" data-tip="Each Node on its own link. The tiles above add them together and show the worst clock." aria-label="Help">?</button></dt><dd id="d-nodes" hidden></dd>
     <dt>Node</dt><dd id="fw">-</dd>
     <dt id="d-slots-t" hidden>Firmware slots <button type="button" class="tip" data-tip="The Timer keeps two copies of its firmware. An update goes into the copy that is not running, and the Timer falls back to the other one if the new firmware cannot be reached." aria-label="Help">?</button></dt><dd id="d-slots" hidden>-</dd>
   </dl>
@@ -399,12 +400,12 @@
   </dl>
   <div id="pins-pending" class="state" hidden><span class="pill warn">Saved pins differ. They apply when the Timer restarts.</span></div>
   <div class="row">
-    <label class="field"><span>Data to the Node <button type="button" class="tip" data-tip="The Timer's serial transmit, wired to the Node's RX (D7 on a XIAO ESP32-C5). Only some pins can do this." aria-label="Help">?</button></span><select id="pin-tx"></select></label>
-    <label class="field"><span>Data from the Node <button type="button" class="tip" data-tip="The Timer's serial receive, wired to the Node's TX (D6 on a XIAO ESP32-C5). Only some pins can do this." aria-label="Help">?</button></span><select id="pin-rx"></select></label>
-    <label class="field"><span>SYNC <button type="button" class="tip" data-tip="The clock pulse to the Node. The Node's own SYNC pin is set in the Node's GPIO configuration." aria-label="Help">?</button></span><select id="pin-sync"></select></label>
+    <label class="field"><span>Nodes <button type="button" class="tip" data-tip="How many Nodes are wired to this Timer. Each Node has its own pair of data wires. SYNC, reset and boot are one wire each, joined to every Node." aria-label="Help">?</button></span><select id="pin-count"></select></label>
+    <label class="field"><span>SYNC <button type="button" class="tip" data-tip="The clock pulse to every Node. The Node's own SYNC pin is set in the Node's GPIO configuration." aria-label="Help">?</button></span><select id="pin-sync"></select></label>
     <label class="field"><span>Node reset (EN)</span><select id="pin-en"></select></label>
     <label class="field"><span>Node boot (BOOT)</span><select id="pin-boot"></select></label>
   </div>
+  <div id="pin-nodes"></div>
   <div class="row">
     <button class="btn w" id="pins-save">Save pins</button>
     <button class="btn ghost" id="pins-default">Back to the defaults</button>
@@ -556,7 +557,7 @@
     $("fw-ver").textContent = `${info.fw} on ${info.host}` + (c["usb.console"] ? ", with the USB serial console" : "");
     // The unit can change after the page loads: a Node introduces itself late, or is replaced.
     if (setUnit(((info.nodes || [])[0] || {}).level) && draft) showLevels();
-    const nodes = (info.nodes || []).map((n) => `${n.id} · ${n.chip} · firmware ${n.fw} · ${n.link}` + (n.range_mhz ? ` · ${n.range_mhz.join("–")} MHz` : ""));
+    const nodes = (info.nodes || []).map((n) => (info.nodes.length > 1 && n.slot != null ? `Node ${n.slot + 1}: ` : "") + `${n.id} · ${n.chip} · firmware ${n.fw} · ${n.link}` + (n.range_mhz ? ` · ${n.range_mhz.join("–")} MHz` : ""));
     $("fw").textContent = $("node-ver").textContent = nodes.length ? nodes.join("; ") : "No Node has introduced itself yet.";
     $("fw-actions").hidden = !rp;
     $("wt-card").hidden = !rp;
@@ -613,7 +614,8 @@
     if (!seats.some((s) => s.seat === seat) && seats.length) seat = seats[0].seat;
     sel.value = seat;
     sel.hidden = seats.length < 2;
-    const maxSeats = Math.max(1, Math.min(8, ...((info && info.nodes) || []).map((n) => n.max_seats || 8)));
+    // What the Nodes can take between them (eight until one has introduced itself).
+    const maxSeats = Math.max(1, Math.min(8, ((info && info.nodes) || []).reduce((a, n) => a + (n.max_seats || 8), 0) || 8));
     const ns = $("nseats");
     ns.innerHTML = "";
     for (let n = 1; n <= Math.max(maxSeats, seats.length); n++) ns.add(new Option(String(n), String(n)));
@@ -807,29 +809,63 @@
   $("pins-restart").addEventListener("click", restartTimer);
 
   // ---------------------------------------------------------------- advanced: Node wiring pins
-  const PIN_KEYS = ["tx", "rx", "sync", "en", "boot"];
-  const PIN_NAMES = { tx: "data to the Node", rx: "data from the Node", sync: "SYNC", en: "reset", boot: "boot" };
-  let pinsDirty = false, pinDefaults = null;
-  const pinsText = (p) => PIN_KEYS.map((k) => `${PIN_NAMES[k]} GP${p[k]}`).join(", ");
-  function setPins(p) { for (const k of PIN_KEYS) $("pin-" + k).value = String(p[k]); }
+  // Each Node has its own data pair (tx to its RX, D7 on a XIAO ESP32-C5; rx from its TX, D6).
+  // SYNC, reset and boot are shared.
+  const PIN_KEYS = ["sync", "en", "boot"];
+  const PIN_NAMES = { sync: "SYNC", en: "reset", boot: "boot" };
+  const LINK_NAMES = { tx: "data to the Node", rx: "data from the Node" };
+  let pinsDirty = false, pinDefaults = null, pinChoices = null;
+  const pinsText = (p) => (p.nodes || []).map((n, i) => `Node ${i + 1} data out GP${n.tx}, in GP${n.rx}`).concat(PIN_KEYS.map((k) => `${PIN_NAMES[k]} GP${p[k]}`)).join(", ");
+  const readNodes = () => [...$("pin-nodes").children].map((row, i) => ({ tx: Number($(`pin-n${i}-tx`).value), rx: Number($(`pin-n${i}-rx`).value) }));
+  // One row of selects per Node. A Node added here starts on the first pins nothing else uses.
+  function showNodePins(count, nodes) {
+    const used = new Set(PIN_KEYS.map((k) => Number($("pin-" + k).value)));
+    const rows = [];
+    for (let i = 0; i < count; i++) {
+      const row = document.createElement("div");
+      row.className = "row";
+      for (const k of ["tx", "rx"]) {
+        const list = pinChoices.nodes[i][k];
+        const at = nodes[i] ? nodes[i][k] : list.find((n) => !used.has(n)) ?? list[0];
+        used.add(at);
+        const label = document.createElement("label"), span = document.createElement("span"), sel = document.createElement("select");
+        label.className = "field";
+        span.textContent = `Node ${i + 1}: ${LINK_NAMES[k]}`;
+        sel.id = `pin-n${i}-${k}`;
+        sel.replaceChildren(...list.map((n) => new Option(`GP${n}`, String(n))));
+        sel.value = String(at);
+        sel.addEventListener("change", () => { pinsDirty = true; });
+        label.append(span, sel);
+        row.append(label);
+      }
+      rows.push(row);
+    }
+    $("pin-nodes").replaceChildren(...rows);
+  }
+  function setPins(p) {
+    for (const k of PIN_KEYS) $("pin-" + k).value = String(p[k]);
+    $("pin-count").value = String(p.nodes.length);
+    showNodePins(p.nodes.length, p.nodes);
+  }
   function showPins(s) {
     pinDefaults = s.defaults;
+    pinChoices = s.choices;
     $("pins-using").textContent = pinsText(s.using);
     $("pins-pending").hidden = !s.restart_needed;
     if (pinsDirty) return;
-    for (const k of PIN_KEYS) {
-      const list = s.choices[k] || s.choices.out;
-      $("pin-" + k).replaceChildren(...list.map((n) => new Option(`GP${n}` + (n === s.defaults[k] ? " (default)" : ""), String(n))));
-    }
+    for (const k of PIN_KEYS) $("pin-" + k).replaceChildren(...s.choices.out.map((n) => new Option(`GP${n}` + (n === s.defaults[k] ? " (default)" : ""), String(n))));
+    $("pin-count").replaceChildren(...s.choices.nodes.map((_, i) => new Option(String(i + 1), String(i + 1))));
     setPins(s.saved);
   }
   async function loadPins() { try { showPins(await json("/pins")); } catch { /* older firmware */ } }
   for (const k of PIN_KEYS) $("pin-" + k).addEventListener("change", () => { pinsDirty = true; });
+  $("pin-count").addEventListener("change", () => { pinsDirty = true; showNodePins(Number($("pin-count").value), readNodes()); });
   $("pins-default").addEventListener("click", () => { if (pinDefaults) { setPins(pinDefaults); pinsDirty = true; } });
   $("pins-save").addEventListener("click", async () => {
-    const body = Object.fromEntries(PIN_KEYS.map((k) => [k, Number($("pin-" + k).value)]));
-    const clash = PIN_KEYS.find((k, i) => PIN_KEYS.slice(0, i).some((o) => body[o] === body[k]));
-    if (clash) return fail(`GP${body[clash]} is chosen twice. Each wire needs its own pin.`);
+    const body = { nodes: readNodes(), ...Object.fromEntries(PIN_KEYS.map((k) => [k, Number($("pin-" + k).value)])) };
+    const all = [...body.nodes.flatMap((n) => [n.tx, n.rx]), ...PIN_KEYS.map((k) => body[k])];
+    const clash = all.find((pin, i) => all.indexOf(pin) !== i);
+    if (clash != null) return fail(`GP${clash} is chosen twice. Each wire needs its own pin.`);
     try {
       pinsDirty = false;
       showPins(await json("/pins", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
@@ -849,8 +885,25 @@
 
   function showStatus(st) {
     status = st;
-    $("s-node").innerHTML = st.node_connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>';
-    pill($("h-node"), st.node_connected ? "Node connected" : "Node not connected", st.node_connected ? "ok" : "bad");
+    // A Timer with several Nodes lists them; `node_connected` is then "all of them".
+    const sn = st.nodes || [], upN = sn.filter((n) => n.connected).length;
+    if (sn.length > 1) {
+      $("s-node").innerHTML = `<span class="pill ${st.node_connected ? "ok" : "bad"}">${upN} of ${sn.length} connected</span>`;
+      pill($("h-node"), `${upN} of ${sn.length} Nodes connected`, st.node_connected ? "ok" : "bad");
+    } else {
+      $("s-node").innerHTML = st.node_connected ? '<span class="pill ok">connected</span>' : '<span class="pill bad">not connected</span>';
+      pill($("h-node"), st.node_connected ? "Node connected" : "Node not connected", st.node_connected ? "ok" : "bad");
+    }
+    $("d-nodes-t").hidden = $("d-nodes").hidden = sn.length < 2;
+    $("d-nodes").replaceChildren(...sn.map((n, i) => {
+      const div = document.createElement("div"), l = n.link || {};
+      div.textContent = `Node ${i + 1}` + (n.id ? ` (${n.id})` : "") + (n.connected ? ": connected" : ": not connected")
+        + `, clock ${n.clock_synced ? n.clock_source + (n.clock_err_us == null ? "" : ` ${n.clock_err_us.toFixed(1)} µs`) : "not synced"}`
+        + (n.temp_c ? `, ${n.temp_c.toFixed(0)} °C` : "")
+        + `, samples missing ${l.gap_samples || 0}, damaged messages ${l.crc_errors || 0}, serial errors ${l.uart_errors || 0}`
+        + `, seats ${(st.seats || []).filter((x) => n.id && x.node === n.id).map((x) => x.seat).join(" ") || "none"}`;
+      return div;
+    }));
     const err = st.clock_err_us == null ? "" : `, error ${st.clock_err_us.toFixed(1)} µs`;
     const drift = st.drift_ppm == null ? "" : `, drift ${st.drift_ppm.toFixed(0)} ppm`;
     $("s-clock").textContent = st.clock_synced ? `${st.clock_source}${err}${drift}` : `${st.clock_source || "none"}, not synced yet`;
@@ -1259,11 +1312,12 @@
     if (f.running) {
       bar.hidden = false;
       bar.value = f.bytes ? Math.round((100 * f.written) / f.bytes) : 0;
-      nodeState(`Updating the Node: ${f.step}` + (f.step === "writing" ? ` (${Math.round(f.written / 1024)} of ${Math.round(f.bytes / 1024)} KB)` : "") + "…");
+      nodeState((f.nodes > 1 ? `Updating Node ${f.node + 1} of ${f.nodes}` : "Updating the Node") + `: ${f.step}` + (f.step === "writing" ? ` (${Math.round(f.written / 1024)} of ${Math.round(f.bytes / 1024)} KB)` : "") + "…");
     } else if (f.done) {
       bar.hidden = true;
-      if (f.ok) nodeState(`Node updated in ${f.seconds} s: ${Math.round(f.bytes / 1024)} KB written and checked. ` + (f.returned ? "The Node is back on the link." : "The Node has not come back on the link yet.") + (f.backup ? ` What was on the Node before is saved on the Timer as ${f.backup}.` : ""), f.returned ? "ok" : "bad");
-      else nodeState(`Node update failed after ${f.seconds} s: ${f.error}. ` + (f.returned ? "The Node restarted with what it had." : "The Node is not answering; run the update again."), "bad");
+      const many = f.nodes > 1;
+      if (f.ok) nodeState(`${many ? `${f.nodes} Nodes` : "Node"} updated in ${f.seconds} s: ${Math.round(f.bytes / 1024)} KB written${many ? " to each" : ""} and checked. ` + (f.returned ? (many ? "The Nodes are back on their links." : "The Node is back on the link.") : (many ? "Not every Node has come back on its link yet." : "The Node has not come back on the link yet.")) + (f.backup ? ` What was on the Node before is saved on the Timer as ${f.backup}.` : ""), f.returned ? "ok" : "bad");
+      else nodeState(`${many ? `Update of Node ${f.node + 1} of ${f.nodes}` : "Node update"} failed after ${f.seconds} s: ${f.error}. ` + (many && f.nodes_done ? `${f.nodes_done} written before it. ` : "") + (f.returned ? "The Node restarted with what it had." : "The Node is not answering; run the update again."), "bad");
     }
     return f.running;
   }
@@ -1332,9 +1386,12 @@
   const verdict = (v, okText, badText) => (v == null ? "waiting" : v ? `<span class="pill ok">${okText}</span>` : `<span class="pill bad">${badText}</span>`);
   function showWireTest(w) {
     $("wt").hidden = !(w.running || w.done);
-    $("wt-en").innerHTML = verdict(w.en_ok, `works: back in ${(w.en_ms / 1000).toFixed(1)} s`, "no restart seen within 90 s");
-    $("wt-boot").innerHTML = verdict(w.boot_ok, "works: the bootloader answered", "the bootloader did not answer");
-    $("wt-rec").innerHTML = verdict(w.recovered, `yes, after ${(w.recover_ms / 1000).toFixed(1)} s`, "not seen within 90 s; power-cycle the Timer");
+    // The wires are shared, so one verdict per Node tells a bad joint from a bad wire.
+    const each = (w.nodes || []).length > 1 ? w.nodes : [w];
+    const rows = (f) => each.map((n, i) => (each.length > 1 ? `Node ${i + 1}: ` : "") + f(n)).join("<br>");
+    $("wt-en").innerHTML = rows((n) => verdict(n.en_ok, `works: back in ${(n.en_ms / 1000).toFixed(1)} s`, "no restart seen within 90 s"));
+    $("wt-boot").innerHTML = rows((n) => verdict(n.boot_ok, "works: the bootloader answered", "the bootloader did not answer"));
+    $("wt-rec").innerHTML = rows((n) => verdict(n.recovered, `yes, after ${(n.recover_ms / 1000).toFixed(1)} s`, "not seen within 90 s; power-cycle the Timer"));
     $("wt-step").textContent = w.running ? `Running: ${w.step}…` : w.done && w.boot_ok === false && w.en_ok ? "A failed boot wire with a working reset wire usually means the BOOT pad is not the pin the firmware assumes, or that wire is loose." : "";
     $("wiretest").disabled = !!w.running;
   }

@@ -5,7 +5,7 @@ Shared code for every OFT Timer host. The spec lives in the sibling `oft-spec` r
 | Crate | `no_std` | What |
 |---|---|---|
 | `oft-nodelink` | ✅ | Node ↔ Timer link: COBS + CRC-16 frames, message types (spec §5) |
-| `oft-core` | ✅ | `ClockMap` (Node clock → Timer clock), `Detector` (`edge_mid`, spec §8), `NodeHost` (one Node's Timer-side state) |
+| `oft-core` | ✅ | `ClockMap` (Node clock → Timer clock), `Detector` (`edge_mid`, spec §8), `NodeHost` (one Node's Timer-side state), `sched` and `Hosts` (several Nodes: which Node watches which seat, spec §4.1) |
 | `oft-sim` | std | Synthetic passes (`Scene`), a drifting `NodeClock`, and a `FakeNode` that speaks the link in memory |
 | `oftd` | std | Linux Timer: serves the OFT Protocol (spec §6) over HTTP + WebSocket. `--fake` runs without hardware |
 

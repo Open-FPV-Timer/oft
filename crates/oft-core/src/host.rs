@@ -32,14 +32,12 @@ struct Outstanding {
     t_sent: u64,
 }
 
-pub struct NodeHost {
+/// The Timer's end of one Node link without the detectors: who the Node is, and the mapping
+/// from its clock to the Timer clock. [`NodeHost`] is one of these with detectors; a
+/// multi-Node Timer ([`crate::Hosts`]) has one per Node and shares the detectors.
+pub struct Link {
     clock: ClockMap,
-    detectors: [Option<Detector>; MAX_SEATS],
-    cfg: Config,
-    /// Per-seat threshold overrides; `None` uses `cfg.threshold`.
-    seat_thresholds: [Option<Threshold>; MAX_SEATS],
     hello: Option<Hello>,
-    plan: Option<Plan>,
     pings: [Option<Outstanding>; 4],
     next_ping: u32,
     /// Timer time of the last SYNC pulse, by edge sequence, for pairing with `SyncEdge`.
@@ -53,15 +51,17 @@ pub struct NodeHost {
     pub dropped_samples: u32,
 }
 
-impl NodeHost {
-    pub fn new(cfg: Config) -> Self {
+impl Default for Link {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Link {
+    pub fn new() -> Self {
         Self {
             clock: ClockMap::new(),
-            detectors: core::array::from_fn(|_| None),
-            cfg,
-            seat_thresholds: [None; MAX_SEATS],
             hello: None,
-            plan: None,
             pings: [None; 4],
             next_ping: 1,
             sync_pulses: [(0, 0); 8],
@@ -90,6 +90,145 @@ impl NodeHost {
 
     pub fn hello(&self) -> Option<&Hello> {
         self.hello.as_ref()
+    }
+
+    /// Build a `Ping` to send now. Remember it so the pong can be matched.
+    pub fn make_ping(&mut self, t_timer: u64) -> Message {
+        let id = self.next_ping;
+        self.next_ping = self.next_ping.wrapping_add(1);
+        let slot = (id as usize) % self.pings.len();
+        self.pings[slot] = Some(Outstanding { id, t_sent: t_timer });
+        Message::Ping(oft_nodelink::msg::Ping { id, t_timer })
+    }
+
+    /// The host pulsed SYNC at `t_timer`. Returns the edge sequence the Node will report.
+    pub fn sync_pulsed(&mut self, t_timer: u64) -> u32 {
+        self.sync_seq = self.sync_seq.wrapping_add(1);
+        self.sync_pulses[self.sync_pulse_next] = (self.sync_seq, t_timer);
+        self.sync_pulse_next = (self.sync_pulse_next + 1) % self.sync_pulses.len();
+        self.sync_seq
+    }
+
+    /// Feed one decoded message that is not `Samples`. `t_timer` is when it arrived.
+    pub(crate) fn feed(&mut self, msg: &Message, t_timer: u64, out: &mut impl FnMut(Event)) {
+        match msg {
+            Message::Hello(h) => {
+                self.hello = Some(*h);
+                // A fresh Node clock: forget the old mapping.
+                self.clock = ClockMap::new();
+                self.sync_pairs = 0;
+                self.last_samples_t = None;
+                out(Event::Hello(*h));
+            }
+            Message::SyncEdge(e) => {
+                // Pair by time, not by sequence number: either side may restart its
+                // counter. The edge belongs to the latest pulse issued before it arrived,
+                // provided it arrived before the following pulse would have.
+                if let Some(t_pulse) = self.pulse_for(t_timer) {
+                    self.clock.add_pair(e.t_node, t_pulse);
+                    self.sync_pairs += 1;
+                    out(Event::Synced);
+                }
+            }
+            Message::Pong(p) => {
+                let slot = (p.id as usize) % self.pings.len();
+                if let Some(o) = self.pings[slot] {
+                    if o.id == p.id && o.t_sent == p.t_timer {
+                        self.pings[slot] = None;
+                        if self.sync_pairs == 0 && self.clock.add_ping(o.t_sent, t_timer, p.t_node) {
+                            out(Event::Synced);
+                        }
+                    }
+                }
+            }
+            Message::Status(s) => out(Event::Status(*s)),
+            // Samples go to a detector; Timer → Node messages echoed back, or Ping: nothing to do.
+            _ => {}
+        }
+    }
+
+    /// The SYNC pulse an edge arriving at `t_arrival` belongs to.
+    fn pulse_for(&self, t_arrival: u64) -> Option<u64> {
+        let mut latest: Option<u64> = None;
+        let mut previous: Option<u64> = None;
+        for &(seq, t) in &self.sync_pulses {
+            if seq == 0 || t > t_arrival {
+                continue;
+            }
+            match latest {
+                Some(l) if t <= l => {
+                    if previous.map_or(true, |p| t > p) {
+                        previous = Some(t);
+                    }
+                }
+                _ => {
+                    previous = latest;
+                    latest = Some(t);
+                }
+            }
+        }
+        let l = latest?;
+        match previous {
+            // Must have arrived within one pulse period of its pulse.
+            Some(p) => (t_arrival - l < l - p).then_some(l),
+            None => Some(l),
+        }
+    }
+
+    /// Run a batch through `det` (or count it as dropped if its seat has none), and put the
+    /// crossings it finishes on the Timer clock.
+    pub(crate) fn feed_samples(&mut self, det: Option<&mut Detector>, s: &Samples, out: &mut impl FnMut(Event)) {
+        let Some(det) = det else {
+            self.dropped_samples = self.dropped_samples.wrapping_add(s.len() as u32);
+            return;
+        };
+        if let Some(last) = self.last_samples_t {
+            // Gap detection: more than two sample periods missing.
+            if s.t0 > last + 3 * s.dt_us as u64 {
+                self.dropped_samples = self.dropped_samples.wrapping_add(((s.t0 - last) / s.dt_us.max(1) as u64) as u32);
+            }
+        }
+        // A Node with no floor estimate for this batch sends an impossible value; ignore it.
+        if s.noise_floor > -3000 {
+            det.floor_hint(s.noise_floor);
+        }
+        for (k, &p) in s.power().iter().enumerate() {
+            let t = s.time_of(k);
+            if let Some(c) = det.push(t, p, s.flags) {
+                let clock = &self.clock;
+                out(Event::Crossing(c.map_times(|t| clock.to_timer(t))));
+            }
+        }
+        self.last_samples_t = Some(s.time_of(s.len().saturating_sub(1)));
+    }
+}
+
+pub struct NodeHost {
+    link: Link,
+    detectors: [Option<Detector>; MAX_SEATS],
+    cfg: Config,
+    /// Per-seat threshold overrides; `None` uses `cfg.threshold`.
+    seat_thresholds: [Option<Threshold>; MAX_SEATS],
+    plan: Option<Plan>,
+    pub dropped_samples: u32,
+}
+
+impl NodeHost {
+    pub fn new(cfg: Config) -> Self {
+        Self { link: Link::new(), detectors: core::array::from_fn(|_| None), cfg, seat_thresholds: [None; MAX_SEATS], plan: None, dropped_samples: 0 }
+    }
+
+    pub fn clock(&self) -> &ClockMap {
+        self.link.clock()
+    }
+
+    /// Which sync source the clock map is built from.
+    pub fn sync_source(&self) -> &'static str {
+        self.link.sync_source()
+    }
+
+    pub fn hello(&self) -> Option<&Hello> {
+        self.link.hello()
     }
 
     pub fn plan(&self) -> Option<&Plan> {
@@ -159,112 +298,25 @@ impl NodeHost {
 
     /// Build a `Ping` to send now. Remember it so the pong can be matched.
     pub fn make_ping(&mut self, t_timer: u64) -> Message {
-        let id = self.next_ping;
-        self.next_ping = self.next_ping.wrapping_add(1);
-        let slot = (id as usize) % self.pings.len();
-        self.pings[slot] = Some(Outstanding { id, t_sent: t_timer });
-        Message::Ping(oft_nodelink::msg::Ping { id, t_timer })
+        self.link.make_ping(t_timer)
     }
 
     /// The host pulsed SYNC at `t_timer`. Returns the edge sequence the Node will report.
     pub fn sync_pulsed(&mut self, t_timer: u64) -> u32 {
-        self.sync_seq = self.sync_seq.wrapping_add(1);
-        self.sync_pulses[self.sync_pulse_next] = (self.sync_seq, t_timer);
-        self.sync_pulse_next = (self.sync_pulse_next + 1) % self.sync_pulses.len();
-        self.sync_seq
+        self.link.sync_pulsed(t_timer)
     }
 
     /// Feed one decoded message from the Node. `t_timer` is when it arrived. Events are
     /// pushed to `out`; at most one crossing per sample, so a batch may yield several.
     pub fn feed(&mut self, msg: &Message, t_timer: u64, mut out: impl FnMut(Event)) {
         match msg {
-            Message::Hello(h) => {
-                self.hello = Some(*h);
-                // A fresh Node clock: forget the old mapping.
-                self.clock = ClockMap::new();
-                self.sync_pairs = 0;
-                self.last_samples_t = None;
-                out(Event::Hello(*h));
+            Message::Samples(s) => {
+                let det = self.detectors.get_mut(s.seat as usize).and_then(|d| d.as_mut());
+                self.link.feed_samples(det, s, &mut out);
+                self.dropped_samples = self.link.dropped_samples;
             }
-            Message::Samples(s) => self.feed_samples(s, &mut out),
-            Message::SyncEdge(e) => {
-                // Pair by time, not by sequence number: either side may restart its
-                // counter. The edge belongs to the latest pulse issued before it arrived,
-                // provided it arrived before the following pulse would have.
-                if let Some(t_pulse) = self.pulse_for(t_timer) {
-                    self.clock.add_pair(e.t_node, t_pulse);
-                    self.sync_pairs += 1;
-                    out(Event::Synced);
-                }
-            }
-            Message::Pong(p) => {
-                let slot = (p.id as usize) % self.pings.len();
-                if let Some(o) = self.pings[slot] {
-                    if o.id == p.id && o.t_sent == p.t_timer {
-                        self.pings[slot] = None;
-                        if self.sync_pairs == 0 && self.clock.add_ping(o.t_sent, t_timer, p.t_node) {
-                            out(Event::Synced);
-                        }
-                    }
-                }
-            }
-            Message::Status(s) => out(Event::Status(*s)),
-            // Timer → Node messages echoed back, or Ping: nothing to do.
-            _ => {}
+            _ => self.link.feed(msg, t_timer, &mut out),
         }
-    }
-
-    /// The SYNC pulse an edge arriving at `t_arrival` belongs to.
-    fn pulse_for(&self, t_arrival: u64) -> Option<u64> {
-        let mut latest: Option<u64> = None;
-        let mut previous: Option<u64> = None;
-        for &(seq, t) in &self.sync_pulses {
-            if seq == 0 || t > t_arrival {
-                continue;
-            }
-            match latest {
-                Some(l) if t <= l => {
-                    if previous.map_or(true, |p| t > p) {
-                        previous = Some(t);
-                    }
-                }
-                _ => {
-                    previous = latest;
-                    latest = Some(t);
-                }
-            }
-        }
-        let l = latest?;
-        match previous {
-            // Must have arrived within one pulse period of its pulse.
-            Some(p) => (t_arrival - l < l - p).then_some(l),
-            None => Some(l),
-        }
-    }
-
-    fn feed_samples(&mut self, s: &Samples, out: &mut impl FnMut(Event)) {
-        let Some(det) = self.detectors.get_mut(s.seat as usize).and_then(|d| d.as_mut()) else {
-            self.dropped_samples = self.dropped_samples.wrapping_add(s.len() as u32);
-            return;
-        };
-        if let Some(last) = self.last_samples_t {
-            // Gap detection: more than two sample periods missing.
-            if s.t0 > last + 3 * s.dt_us as u64 {
-                self.dropped_samples = self.dropped_samples.wrapping_add(((s.t0 - last) / s.dt_us.max(1) as u64) as u32);
-            }
-        }
-        // A Node with no floor estimate for this batch sends an impossible value; ignore it.
-        if s.noise_floor > -3000 {
-            det.floor_hint(s.noise_floor);
-        }
-        for (k, &p) in s.power().iter().enumerate() {
-            let t = s.time_of(k);
-            if let Some(c) = det.push(t, p, s.flags) {
-                let clock = &self.clock;
-                out(Event::Crossing(c.map_times(|t| clock.to_timer(t))));
-            }
-        }
-        self.last_samples_t = Some(s.time_of(s.len().saturating_sub(1)));
     }
 }
 

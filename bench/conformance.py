@@ -29,23 +29,27 @@ OPT_INT = (int, None)
 THRESHOLD = ({"mode": "auto", "snr_enter": int, "hysteresis": int}, {"mode": "manual", "enter": int, "exit": int})
 SEAT_CONFIG = {"seat": int, "freq_mhz": int, "enabled": bool, "threshold?": THRESHOLD}
 CONFIG = {"seats": [SEAT_CONFIG], "threshold": THRESHOLD, "min_lap_ms": int, "exit_hold_ms": int, "pass_window_ms": int}
-NODE = {"id": str, "chip": str, "fw": str, "range_mhz": [int], "max_seats": int, "level": {"unit": str, "scale": NUM}, "link": str}
+NODE = {"id": str, "chip": str, "fw": str, "range_mhz": [int], "max_seats": int, "level": {"unit": str, "scale": NUM}, "link": str, "slot?": int, "connected?": bool}
 INFO = {
     "id": str, "name": str, "boot_id": str, "proto": int, "host": str, "fw": str, "level": str, "calibrated": bool,
-    "nodes": [NODE], "seats": [{"seat": int, "node": int, "rate_hz": int}], "capabilities": dict,
+    "nodes": [NODE], "seats": [{"seat": int, "node": (int, None), "rate_hz": int}], "capabilities": dict,
 }
 LINK = {"gap_samples": int, "crc_errors": int, "uart_errors": OPT_INT, "node_overruns": OPT_INT, "node_hop_errors": OPT_INT, "node_gain": OPT_INT}
 SEAT_STATUS = {"seat": int, "node": (str, None), "rate_hz": int, "rssi": OPT_INT, "floor": OPT_INT, "enter": int, "exit": int, "crossing": bool}
+NODE_STATUS = {
+    "slot": int, "id": (str, None), "connected": bool, "temp_c": (*NUM, None), "clock_synced": bool, "clock_source": str,
+    "clock_err_us": (*NUM, None), "drift_ppm": (*NUM, None), "link": LINK,
+}
 STATUS = {
     "type": "status", "uptime_s": int, "time_us": int, "temp_c": (*NUM, None), "timer_temp_c": (*NUM, None), "dropped": int,
     "clock_err_us": (*NUM, None), "clock_synced": bool, "clock_source": str, "drift_ppm": (*NUM, None), "node_connected": bool,
-    "link": LINK, "seats": [SEAT_STATUS], "clients": int, "config_rev": int, "control": ({"id": int, "name": str}, None),
+    "link": LINK, "nodes?": [NODE_STATUS], "seats": [SEAT_STATUS], "clients": int, "config_rev": int, "control": ({"id": int, "name": str}, None),
 }
 CONTROL = {"holder": OPT_INT, "claims": [{"id": int, "name": str, "holds": bool, "connected": bool}]}
 CROSSING = {"type": "crossing", "seq": int, "seat": int, "t_enter": int, "t_exit": int, "t_mid": int, "peak": int, "snr": int, "flags": [str]}
 ERROR = {"error": str}
 NET = ({"mode": "dhcp"}, {"mode": "static", "address": str, "prefix": int, "gateway?": str, "dns?": str})
-PINS = {"tx": int, "rx": int, "sync": int, "en": int, "boot": int}
+PINS = {"nodes": [{"tx": int, "rx": int}], "sync": int, "en": int, "boot": int}
 
 
 def mismatch(v, shape, at="reply"):
@@ -141,7 +145,7 @@ class Timer:
         net_state = {"saved": NET, "using": str, "now": ({"address": str, "prefix": int, "gateway?": str}, None), "restart_needed": bool}
         self.expect("GET /network" + ("" if net else " (not announced)"), "/network", 200 if net else 404, net_state if net else (ERROR, str, None))
         pins = "pins" in caps
-        pins_state = {"saved": PINS, "using": PINS, "defaults": PINS, "choices": {"tx": [int], "rx": [int], "out": [int]}, "restart_needed": bool}
+        pins_state = {"saved": PINS, "using": PINS, "defaults": PINS, "choices": {"nodes": [{"tx": [int], "rx": [int]}], "out": [int]}, "restart_needed": bool}
         self.expect("GET /pins" + ("" if pins else " (not announced)"), "/pins", 200 if pins else 404, pins_state if pins else (ERROR, str, None))
         control = "control" in caps
         self.expect("GET /control" + ("" if control else " (not announced)"), "/control", 200 if control else 404, CONTROL if control else (ERROR, str, None))
