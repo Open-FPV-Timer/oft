@@ -24,6 +24,7 @@ pub const OP_WRITE_REG: u8 = 0x09;
 pub const OP_READ_REG: u8 = 0x0a;
 pub const OP_SPI_SET_PARAMS: u8 = 0x0b;
 pub const OP_SPI_ATTACH: u8 = 0x0d;
+pub const OP_CHANGE_BAUD: u8 = 0x0f;
 pub const OP_SPI_FLASH_MD5: u8 = 0x13;
 
 /// Data bytes per `FLASH_DATA` block when talking to the ROM.
@@ -160,6 +161,14 @@ pub fn write_reg(addr: u32, value: u32) -> Request {
     Request::new(OP_WRITE_REG, 0).word(addr).word(value).word(0xffff_ffff).word(0).done()
 }
 
+/// `CHANGE_BAUDRATE`: the ROM bootloader answers at the old rate, then listens at `baud`.
+/// Unlike the rate it works out for itself from the first `SYNC`, this one is exact, which
+/// is what makes the higher rates dependable. (The second word is the old rate, for the
+/// stub loader only; the ROM wants 0.)
+pub fn change_baud(baud: u32) -> Request {
+    Request::new(OP_CHANGE_BAUD, 0).word(baud).word(0).done()
+}
+
 /// `READ_REG`: the register's value comes back in the reply's `value` field.
 pub fn read_reg(addr: u32) -> Request {
     Request::new(OP_READ_REG, 0).word(addr).done()
@@ -175,6 +184,26 @@ pub mod c5_wdt {
     /// Unlocks either write-protect register.
     pub const WKEY: u32 = 0x50d8_3aa1;
     pub const SWD_AUTO_FEED_EN: u32 = 1 << 18;
+    /// Stage 0 timeout, in slow-clock ticks.
+    pub const RWDT_CONFIG1: u32 = BASE + 0x04;
+    /// `RWDT_CONFIG0` value that restarts the whole chip when stage 0 runs out: watchdog
+    /// on (bit 31), stage 0 = system reset (4 in bits 30:28), and the reset lengths at their
+    /// power-on value of 1 (bits 18:16 and 15:13). From IDF 5.5's `lp_wdt_reg.h` for the C5.
+    pub const RWDT_SYSTEM_RESET: u32 = (1 << 31) | (4 << 28) | (1 << 16) | (1 << 13);
+    /// A timeout short enough to be immediate and long enough for the reply to leave.
+    pub const RWDT_RESET_TICKS: u32 = 2000;
+}
+
+/// The C5 register that sends the chip into its ROM bootloader at the next restart without
+/// the BOOT strap (IDF 5.5's `lp_aon_reg.h`: `LP_AON_SYS_CFG_REG`). The Node firmware sets
+/// `FORCE_DOWNLOAD` to 1 on a `Dfu` message; whoever talks to the bootloader afterwards has
+/// to clear it, or the chip may come back to the bootloader after its next restart.
+pub mod c5_boot {
+    pub const SYS_CFG: u32 = 0x600b_1000 + 0x34;
+    /// Bits 30:29: 0 = start normally, 1 = ROM bootloader on UART and USB.
+    pub const FORCE_DOWNLOAD: u32 = 3 << 29;
+    /// Bit 31 restarts the main system when written as 1: never write it back.
+    pub const SW_RESET: u32 = 1 << 31;
 }
 
 pub const fn blocks(size: u32) -> u32 {

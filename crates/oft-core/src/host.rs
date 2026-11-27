@@ -184,7 +184,11 @@ impl Link {
         };
         if let Some(last) = self.last_samples_t {
             // Gap detection: more than two sample periods missing.
-            if s.t0 > last + 3 * s.dt_us as u64 {
+            // A silence of a second or more is not samples lost on the way: the Node had no
+            // seat for a while, or restarted, or its link was down, and each of those is
+            // reported in its own right. Counting it put tens of thousands of "dropped"
+            // samples on a Node that had simply been idle (seen 2026-11-27).
+            if s.t0 > last + 3 * s.dt_us as u64 && s.t0 - last < 1_000_000 {
                 self.dropped_samples = self.dropped_samples.wrapping_add(((s.t0 - last) / s.dt_us.max(1) as u64) as u32);
             }
         }
