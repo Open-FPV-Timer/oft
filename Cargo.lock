@@ -722,22 +722,22 @@ dependencies = [
 
 [[package]]
 name = "oft-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oft-nodelink",
 ]
 
 [[package]]
 name = "oft-esprom"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "oft-nodelink"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "oft-sim"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "oft-core",
  "oft-nodelink",
@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "oftd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "clap",
