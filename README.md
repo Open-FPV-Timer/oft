@@ -40,6 +40,14 @@ Its id is `oft-` and four hex digits that stay the same on one machine (from
 that off, `--id` sets the id. `cargo test -p oftd --test api mdns -- --ignored` checks the
 advertisement on a host with multicast.
 
+## What is protocol and what is not
+
+`oftd` serves the OFT Protocol (spec §6) for race software. Its own page, and the things
+that page does on this Timer (updating the Node's firmware, `/fw/node`), are not part of
+the protocol: `/info` points to the page with `manage_url` and lists what it can do here
+under `manage`. `/status` carries `problems` (`node_missing` when the Node is not
+answering).
+
 ## One protocol, two implementations
 
 `oftd` and the RP2350 firmware ([oft-timer-rp2350](../oft-timer-rp2350)) share `oft-core`

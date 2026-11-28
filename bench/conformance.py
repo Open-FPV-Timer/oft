@@ -33,6 +33,7 @@ NODE = {"id": str, "chip": str, "fw": str, "range_mhz": [int], "max_seats": int,
 INFO = {
     "id": str, "name": str, "boot_id": str, "proto": int, "host": str, "fw": str, "level": str, "calibrated": bool,
     "nodes": [NODE], "seats": [{"seat": int, "node": (int, None), "rate_hz": int}], "capabilities": dict,
+    "manage_url?": str, "manage?": dict,
 }
 LINK = {"gap_samples": int, "crc_errors": int, "uart_errors": OPT_INT, "node_overruns": OPT_INT, "node_hop_errors": OPT_INT, "node_gain": OPT_INT}
 SEAT_STATUS = {"seat": int, "node": (str, None), "rate_hz": int, "rssi": OPT_INT, "floor": OPT_INT, "enter": int, "exit": int, "crossing": bool}
@@ -43,13 +44,11 @@ NODE_STATUS = {
 STATUS = {
     "type": "status", "uptime_s": int, "time_us": int, "temp_c": (*NUM, None), "timer_temp_c": (*NUM, None), "dropped": int,
     "clock_err_us": (*NUM, None), "clock_synced": bool, "clock_source": str, "drift_ppm": (*NUM, None), "node_connected": bool,
-    "link": LINK, "nodes?": [NODE_STATUS], "seats": [SEAT_STATUS], "clients": int, "config_rev": int, "control": ({"id": int, "name": str}, None),
+    "problems?": [str], "crash?": dict, "link": LINK, "nodes?": [NODE_STATUS], "seats": [SEAT_STATUS], "clients": int, "config_rev": int, "control": ({"id": int, "name": str}, None),
 }
 CONTROL = {"holder": OPT_INT, "claims": [{"id": int, "name": str, "holds": bool, "connected": bool}]}
 CROSSING = {"type": "crossing", "seq": int, "seat": int, "t_enter": int, "t_exit": int, "t_mid": int, "peak": int, "snr": int, "flags": [str]}
 ERROR = {"error": str}
-NET = ({"mode": "dhcp"}, {"mode": "static", "address": str, "prefix": int, "gateway?": str, "dns?": str})
-PINS = {"nodes": [{"tx": int, "rx": int}], "sync": int, "en": int, "boot": int}
 
 
 def mismatch(v, shape, at="reply"):
@@ -141,12 +140,8 @@ class Timer:
         # Optional parts: there when announced, 404 when not.
         persist = bool(caps.get("config", {}).get("persist"))
         self.expect("GET /config/save" + ("" if persist else " (not announced)"), "/config/save", 200 if persist else 404, {"saved": bool, "current_is_saved": bool} if persist else ERROR)
-        net = "network" in caps
-        net_state = {"saved": NET, "using": str, "now": ({"address": str, "prefix": int, "gateway?": str}, None), "restart_needed": bool}
-        self.expect("GET /network" + ("" if net else " (not announced)"), "/network", 200 if net else 404, net_state if net else (ERROR, str, None))
-        pins = "pins" in caps
-        pins_state = {"saved": PINS, "using": PINS, "defaults": PINS, "choices": {"nodes": [{"tx": [int], "rx": [int]}], "out": [int]}, "restart_needed": bool}
-        self.expect("GET /pins" + ("" if pins else " (not announced)"), "/pins", 200 if pins else 404, pins_state if pins else (ERROR, str, None))
+        # The Timer's own management (network, pins, firmware) is not part of the protocol
+        # and is not checked: race software only links to `manage_url`.
         control = "control" in caps
         self.expect("GET /control" + ("" if control else " (not announced)"), "/control", 200 if control else 404, CONTROL if control else (ERROR, str, None))
         if control:

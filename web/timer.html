@@ -188,6 +188,7 @@
     <div class="tile"><b>Node temperature</b><span id="s-temp">-</span></div>
     <div class="tile"><b>Timer temperature</b><span id="s-ttemp">-</span></div>
     <div class="tile"><b>Uptime</b><span id="s-up">-</span></div>
+    <div class="tile" id="s-health-t" hidden><b>Problems</b><span id="s-health">-</span></div>
     <div class="tile" id="s-clients-t"><b>Clients</b><span id="s-clients">-</span></div>
   </div>
 </section>
@@ -543,7 +544,9 @@
   let baseText = "";        // the config the Setup draft was made from, as JSON
   let stale = false;        // another client changed the config under unapplied edits
 
-  const caps = () => (info && info.capabilities) || {};
+  // What race software may use (`capabilities`) and what only this page uses (`manage`:
+  // network, pins, firmware). Firmware from before spec v0.12 listed both in `capabilities`.
+  const caps = () => ({ ...((info && info.capabilities) || {}), ...((info && info.manage) || {}) });
   const timerNow = () => (frozenNow != null ? frozenNow : clockOff == null ? null : clockOff + performance.now() * 1000);
   const seen = (t_us) => { const off = t_us - performance.now() * 1000; if (clockOff == null || off > clockOff || clockOff - off > 2e6) clockOff = off; };
 
@@ -917,6 +920,12 @@
     pill($("h-clock"), st.clock_synced ? "clock synced" : "clock not synced", st.clock_synced ? "ok" : "warn");
     const s = (st.seats || []).find((x) => x.seat === seat) || (st.seats || [])[0];
     $("s-rate").textContent = s ? `${s.rate_hz} per second` : "no seat";
+    // What the Timer itself reports as wrong, and the crash that ended its last run.
+    const PROBLEMS = { node_missing: "a Node is not answering", safe_mode: "started on the default Node pins after a crash at start-up; restart the Timer to use the saved pins", crashed: "the last run ended in a crash" };
+    const probs = (st.problems || []).map((p) => PROBLEMS[p] || p);
+    if (st.crash) probs.push(`crash: ${st.crash.text}` + (st.crash.count > 1 ? ` (${st.crash.count} in a row)` : ""));
+    $("s-health-t").hidden = !probs.length;
+    $("s-health").textContent = probs.join("; ");
     const up = st.uptime_s;
     $("s-up").textContent = up >= 3600 ? `${Math.floor(up / 3600)} h ${Math.floor((up % 3600) / 60)} min` : up >= 60 ? `${Math.floor(up / 60)} min ${up % 60} s` : `${up} s`;
     $("s-temp").textContent = st.temp_c ? `${st.temp_c.toFixed(0)} °C` : "not reported";

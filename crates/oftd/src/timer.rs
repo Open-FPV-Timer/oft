@@ -294,6 +294,7 @@ impl Timer {
             clock_source: inner.host.sync_source(),
             drift_ppm: clock.is_synced().then(|| clock.drift_ppm()),
             node_connected: inner.node_connected,
+            problems: if inner.node_connected { vec![] } else { vec!["node_missing"] },
             link: LinkJson {
                 gap_samples: inner.host.dropped_samples,
                 crc_errors: inner.crc_errors,
@@ -363,10 +364,14 @@ impl Timer {
                 "time": { "sync": if has_sync { vec!["sync", "ping"] } else { vec!["ping"] } },
                 "control": {},
             },
+            // The Timer's own page, and what that page can do here. Not part of the OFT
+            // Protocol beyond `manage_url` (spec 6.3): race software only links to it.
+            "manage_url": "/",
+            "manage": {},
         });
         match self.cfg.node_fw {
-            Some(crate::nodefw::NodeFlasher::Stm32(_)) => v["capabilities"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false, "node_image": "stm32f1" }),
-            Some(crate::nodefw::NodeFlasher::Esp(_)) => v["capabilities"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false }),
+            Some(crate::nodefw::NodeFlasher::Stm32(_)) => v["manage"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false, "node_image": "stm32f1" }),
+            Some(crate::nodefw::NodeFlasher::Esp(_)) => v["manage"]["fw.update"] = serde_json::json!({ "nodes": ["uart"], "self": false }),
             None => {}
         }
         v

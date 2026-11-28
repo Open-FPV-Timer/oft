@@ -188,6 +188,8 @@ pub struct StatusJson {
     pub clock_source: &'static str,
     pub drift_ppm: Option<f64>,
     pub node_connected: bool,
+    /// What is wrong with the Timer, for race software (spec 6.3): empty when nothing is.
+    pub problems: Vec<&'static str>,
     pub link: LinkJson,
     pub seats: Vec<SeatStatus>,
     pub clients: usize,
